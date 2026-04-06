@@ -2,6 +2,7 @@
 
 from typing import List, Tuple
 from collections import Counter
+from itertools import combinations
 from game.models import (
     Card, Rank, Suit, HandRank, PokerHand, Player, Joker, JokerType,
     Planet, ScoreResult
@@ -101,6 +102,95 @@ class PokerHandEvaluator:
         return False
 
     @staticmethod
+    def evaluate_hand_with_modifiers(
+        cards: List[Card],
+        player: Player,
+        disabled_jokers: List[Joker] = None,
+    ) -> PokerHand:
+        """Evaluate a 5-card hand with joker rule modifiers."""
+        if len(cards) != 5:
+            raise ValueError("Must evaluate exactly 5 cards")
+
+        if disabled_jokers is None:
+            disabled_jokers = []
+
+        active_jokers = [j for j in player.jokers if j not in disabled_jokers]
+
+        # Sort by rank for easier evaluation
+        sorted_cards = sorted(cards, key=lambda c: c.rank.rank_order(), reverse=True)
+
+        # Check for flush with suit-normalization jokers
+        normalized_suits = [
+            PokerHandEvaluator._normalize_suit(c.suit, active_jokers) for c in sorted_cards
+        ]
+        suit_counts = Counter(normalized_suits)
+        is_flush = len(suit_counts) == 1
+
+        has_four_fingers = any(j.type == JokerType.FOUR_FINGERS for j in active_jokers)
+        if not is_flush and has_four_fingers and suit_counts:
+            is_flush = max(suit_counts.values()) >= 4
+
+        # Check for straight with shortcut joker support
+        ranks = sorted([c.rank.rank_order() for c in sorted_cards], reverse=True)
+        is_straight = PokerHandEvaluator._is_straight(ranks)
+
+        has_shortcut = any(j.type == JokerType.SHORTCUT for j in active_jokers)
+        if not is_straight and has_shortcut:
+            is_straight = PokerHandEvaluator._is_shortcut_straight(ranks)
+
+        # Count rank frequencies
+        rank_counts = Counter([c.rank for c in sorted_cards])
+        counts_list = sorted(rank_counts.items(), key=lambda x: (x[1], x[0].rank_order()), reverse=True)
+
+        # Determine hand rank
+        if is_straight and is_flush:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.STRAIGHT_FLUSH, high_card=sorted_cards[0].rank)
+        elif counts_list[0][1] == 4:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.FOUR_OF_A_KIND, high_card=counts_list[0][0])
+        elif counts_list[0][1] == 3 and counts_list[1][1] == 2:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.FULL_HOUSE, high_card=counts_list[0][0])
+        elif is_flush:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.FLUSH, high_card=sorted_cards[0].rank)
+        elif is_straight:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.STRAIGHT, high_card=sorted_cards[0].rank)
+        elif counts_list[0][1] == 3:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.THREE_OF_A_KIND, high_card=counts_list[0][0])
+        elif counts_list[0][1] == 2 and counts_list[1][1] == 2:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.TWO_PAIR, high_card=counts_list[0][0])
+        elif counts_list[0][1] == 2:
+            return PokerHand(cards=sorted_cards, hand_rank=HandRank.PAIR, high_card=counts_list[0][0])
+        return PokerHand(cards=sorted_cards, hand_rank=HandRank.HIGH_CARD, high_card=sorted_cards[0].rank)
+
+    @staticmethod
+    def _is_shortcut_straight(ranks: List[int]) -> bool:
+        """Shortcut straight: any 4 cards can form a sequence with one optional gap."""
+        unique_ranks = set(ranks)
+        if 14 in unique_ranks:
+            unique_ranks.add(1)  # Ace-low compatibility
+
+        ordered = sorted(unique_ranks)
+        if len(ordered) < 4:
+            return False
+
+        for combo in combinations(ordered, 4):
+            if combo[-1] - combo[0] <= 4:
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_suit(suit: Suit, active_jokers: List[Joker]) -> Suit:
+        """Normalize suit for Uniform/Smear rules."""
+        has_uniform = any(j.type == JokerType.UNIFORM for j in active_jokers)
+        has_smear = any(j.type == JokerType.SMEAR for j in active_jokers)
+
+        normalized = suit
+        if has_uniform and normalized in (Suit.SPADES, Suit.CLUBS):
+            normalized = Suit.CLUBS
+        if has_smear and normalized in (Suit.HEARTS, Suit.DIAMONDS):
+            normalized = Suit.HEARTS
+        return normalized
+
+    @staticmethod
     def find_best_hand(cards: List[Card]) -> PokerHand:
         """Find the best 5-card hand from 6+ cards."""
         if len(cards) < 5:
@@ -121,6 +211,29 @@ class PokerHandEvaluator:
 
         return best_hand
 
+    @staticmethod
+    def find_best_hand_with_modifiers(
+        cards: List[Card],
+        player: Player,
+        disabled_jokers: List[Joker] = None,
+    ) -> PokerHand:
+        """Find best 5-card hand while applying joker rule modifiers."""
+        if len(cards) < 5:
+            raise ValueError("Need at least 5 cards")
+
+        if disabled_jokers is None:
+            disabled_jokers = []
+
+        best_hand = None
+        best_rank = -1
+        for combo in combinations(cards, 5):
+            hand = PokerHandEvaluator.evaluate_hand_with_modifiers(list(combo), player, disabled_jokers)
+            rank_value = hand.hand_rank.rank_value()
+            if rank_value > best_rank:
+                best_rank = rank_value
+                best_hand = hand
+        return best_hand
+
 
 class ScoringRules:
     """Implements game scoring with jokers and planets."""
@@ -130,18 +243,30 @@ class ScoringRules:
         hand: PokerHand,
         player: Player,
         opponent: Player = None,
-        disabled_jokers: List[JokerType] = None
+        disabled_jokers: List[Joker] = None,
+        opponent_disabled_jokers: List[Joker] = None,
     ) -> ScoreResult:
         """Calculate final score for a played hand."""
         if disabled_jokers is None:
             disabled_jokers = []
+        if opponent_disabled_jokers is None:
+            opponent_disabled_jokers = []
 
         # Base chips and mult from hand rank
         base_chips = hand.hand_rank.base_chips()
         base_mult = hand.hand_rank.base_mult()
 
-        # Card chips
-        card_chips = sum(c.chip_value() for c in hand.cards)
+        # Card chips (Black Hole modifies opponent aces)
+        opponent_active = []
+        if opponent:
+            opponent_active = [j for j in opponent.jokers if j not in opponent_disabled_jokers]
+        opponent_has_black_hole = any(j.type == JokerType.BLACK_HOLE for j in opponent_active)
+
+        card_chips = 0
+        for c in hand.cards:
+            if opponent_has_black_hole and c.rank == Rank.ACE:
+                continue
+            card_chips += c.chip_value()
 
         # planets modify hand type scores
         planet_name = hand.hand_rank.value[0]
@@ -158,7 +283,10 @@ class ScoringRules:
         joker_mult_bonus = 0
         joker_x_mult = 1.0
 
-        available_jokers = [j for j in player.jokers if j.type not in disabled_jokers]
+        available_jokers = [j for j in player.jokers if j not in disabled_jokers]
+
+        def normalize_suit_for_player(suit: Suit) -> Suit:
+            return PokerHandEvaluator._normalize_suit(suit, available_jokers)
 
         for joker in available_jokers:
             jtype = joker.type
@@ -183,19 +311,19 @@ class ScoringRules:
                     joker_chip_bonus += 20
 
             elif jtype == JokerType.THE_GREEDY:
-                diamonds = sum(1 for c in hand.cards if c.suit == Suit.DIAMONDS)
+                diamonds = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.DIAMONDS)
                 joker_chip_bonus += 10 * diamonds
 
             elif jtype == JokerType.THE_LOVER:
-                hearts = sum(1 for c in hand.cards if c.suit == Suit.HEARTS)
+                hearts = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.HEARTS)
                 joker_chip_bonus += 10 * hearts
 
             elif jtype == JokerType.THE_PROTECTOR:
-                spades = sum(1 for c in hand.cards if c.suit == Suit.SPADES)
+                spades = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.SPADES)
                 joker_chip_bonus += 10 * spades
 
             elif jtype == JokerType.THE_CHAIRMAN:
-                clubs = sum(1 for c in hand.cards if c.suit == Suit.CLUBS)
+                clubs = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.CLUBS)
                 joker_chip_bonus += 10 * clubs
 
             # Rare jokers

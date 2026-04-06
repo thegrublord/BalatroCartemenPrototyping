@@ -116,3 +116,140 @@
   - Lowercase fallback format.
 - Added empty-collection feedback dialogs when no cards are owned yet.
 - Verified updated UI files have no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 14 (Special Joker Rules - Group 1)
+- Implemented modifier-aware hand evaluation engine and integrated it into gameplay/UI scoring paths.
+- Implemented round-start discard modifier application:
+  - SCRAPPY grants +1 discard per copy
+  - STRAITJACKET applies -1 discard per copy to opponent
+  - Effects are applied at the start of each round (after auction acquisitions).
+- Implemented COPYRIGHT as a round-long disable mechanic:
+  - Triggers when both players play the same hand type in a set.
+  - Disables one active opponent joker for the rest of the round.
+  - Current behavior auto-selects highest-value active opponent joker.
+- Implemented BLACK HOLE scoring impact:
+  - Opponent aces in played hand count as 0 card chips.
+- Implemented FOUR FINGERS flush logic:
+  - Any 4 cards of same (normalized) suit count as Flush with any fifth card.
+- Implemented SHORTCUT straight logic:
+  - Any 4 cards that fit a straight window with up to one missing rank count as Straight with any fifth card.
+- Implemented UNIFORM/SMEAR suit normalization effects:
+  - Affects flush detection and suit-based joker chip bonuses (Greedy/Lover/Protector/Chairman).
+- Updated AI hand decision/selection and window scoring previews to use modifier-aware evaluation/scoring.
+- Verified all modified files report no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 15 (COPYRIGHT Target Exclusion)
+- Added rule: COPYRIGHT cannot disable an opponent COPYRIGHT.
+- Kept sequential COPYRIGHT resolution order unchanged.
+- Auto-target selector now excludes opponent jokers of type COPYRIGHT from disable candidates.
+- Verified updated game state module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 16 (Set-to-Set Hand Persistence Fix)
+- Fixed set transition hand behavior within rounds.
+- At round start (Set 1), both players receive a fresh random 8-card hand.
+- Between sets in the same round, remaining cards are now preserved and each player only draws up to 8.
+- This ensures a played 5-card hand leaves 3 cards to carry into the next set, then refills with 5 new cards.
+- Verified updated game state module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 17 (Auction Minimum Bid Alignment)
+- Updated auction minimum bids to match spreadsheet rules.
+- Jokers now use rarity-wide defaults:
+  - Common: 100
+  - Rare: 250
+  - Legendary: 500
+- Planets now use per-card minimum bids:
+  - Pluto 100, Mercury 100, Uranus 100, Venus 150
+  - Saturn 250, Jupiter 150, Earth 250, Mars 250, Neptune 300
+- Verified updated game state module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 18 (Live Selected-Hand Projection)
+- Added a live preview section directly under "YOUR HAND".
+- On every card click, preview now updates immediately (without requiring exactly 5 selected cards).
+- Preview shows:
+  - Selected count
+  - Projected hand type
+  - Projected total chips
+  - Projected multiplier (additive and x-mult components)
+  - Projected final score
+- For fewer than 5 selected cards, it projects the best 5-card outcome that includes selected cards.
+- Verified updated main window module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 19 (Selected-Only Hand Preview Fix)
+- Corrected hand preview behavior for fewer than 5 selected cards.
+- Preview now uses only selected cards and does not auto-fill with additional cards.
+- Incomplete selections (<5) are shown as High Card (Incomplete) for preview scoring.
+- This fixes cases where selecting a single card incorrectly displayed advanced hand types/scores.
+- Verified updated main window module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 20 (Variable-Size Hand Type Preview)
+- Upgraded pre-play hand preview to evaluate selected cards as a variable-size hand (2-5 cards).
+- Preview now correctly detects partial-size hand types like Pair/Trips/Quads/Straight/Flush where applicable.
+- Flush and straight detection for partial hands now respect active joker rule modifiers (e.g., FOUR FINGERS, SHORTCUT, UNIFORM, SMEAR).
+- Removed forced "High Card (Incomplete)" behavior for all selections under 5 cards.
+- Verified updated main window module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 21 (Preview Straight/Flush Threshold Fix)
+- Corrected preview thresholds for flush/straight hand types.
+- Straight/Flush now require 5 selected cards by default.
+- Flush can appear at 4 selected cards only with FOUR FINGERS active.
+- Straight can appear at 4 selected cards only with SHORTCUT active.
+- Verified updated main window module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 22 (Hide Hand Section During Auction)
+- Updated center UI so the full "YOUR HAND" section is hidden while in auction phase.
+- Hidden elements during auction include:
+  - "YOUR HAND" label
+  - selected-hand preview panel
+  - hand card scroll area
+  - play/discard action buttons
+- Cleared remaining player/AI hand cards at auction start so end-of-round leftovers are removed until next round begins.
+- Verified updated main window and game state modules have no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 23 (Simultaneous 5-Card Auction Flow)
+- Refactored auction system from one-card-at-a-time to simultaneous bidding across all 5 revealed cards.
+- Added per-card auction tracking in state:
+  - card_bids list
+  - card_leaders list
+- Turn flow is now:
+  - bidder places bids on any subset of the 5 cards during their turn
+  - bidder clicks End Bidding Turn
+  - after 4 turn rounds, all 5 cards resolve at once
+- Implemented per-card bid placement API in game state (`place_auction_bid_for_card`) and per-card min-next-bid logic.
+- Added new center auction board UI that replaces PLAYED HANDS during auction, showing for each card:
+  - image
+  - name
+  - description
+  - minimum bid / current bid / leader / next legal bid
+  - bid button
+- Added bottom "END BIDDING TURN" action for human.
+- Updated AI auction turn logic to bid across multiple cards in one turn and then end turn.
+- Legacy single-card auction controls are now hidden/disabled in behavior.
+- Verified updated model/state/ai/ui modules have no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 24 (Compact Auction Card Tiles)
+- Reduced auction card tile vertical footprint to keep controls accessible.
+- Changed auction layout to a single-row card grid with compact per-card sizing.
+- Added a constrained-height scroll area for the card board to prevent full-screen takeover.
+- Reduced image, text, and button sizing inside each tile for better fit.
+- Verified updated main window module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 25 (No Duplicate Cards Per Reveal)
+- Updated auction reveal logic so the 5 revealed cards are unique by card type/name within each reveal.
+- Duplicate copies remain in the overall auction deck and can still appear in later rounds.
+- Added auction-card uniqueness key helper for joker/planet duplicate filtering during reveal selection.
+- Verified updated game state module has no editor diagnostics errors.
+
+## 2026-04-04 - Prompt 26 (Auction Board Indentation Error Fix)
+- Fixed malformed indentation in the auction board render loop inside `_update_auction_board_ui`.
+- Normalized indentation for frame/layout/image/name/description widget setup under the per-card loop.
+- Resolved runtime `IndentationError` in `ui/main_window.py` and confirmed no editor diagnostics errors for that file.
+
+## 2026-04-04 - Prompt 27 (Compact Auction Headers + Bid Reduction Button)
+- Reduced vertical footprint of auction header bubbles in center panel:
+  - "AUCTION BOARD" title now uses compact chip-style styling.
+  - Auction turn/details line now uses a smaller fixed-height info chip.
+- Added a new per-card `Bid -Min` button directly under `Bid +Min`.
+- Implemented reversible per-player card bidding state so reducing works correctly against existing AI/player bids.
+- Added state API `reduce_auction_bid_for_card` that subtracts by card minimum and clamps at 0.
+- Updated aggregate card leader/current bid syncing after both raises and reductions.
+- Verified no editor diagnostics errors in updated model/state/ui files.

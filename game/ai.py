@@ -24,7 +24,7 @@ class AIPlayer:
             return (True, [])
 
         # Evaluate current best hand
-        best_hand = PokerHandEvaluator.find_best_hand(self.player.hand)
+        best_hand = PokerHandEvaluator.find_best_hand_with_modifiers(self.player.hand, self.player)
         current_score = ScoringRules.calculate_score(best_hand, self.player, opponent)
 
         # Simple heuristic: if can improve by discarding, do it
@@ -40,7 +40,7 @@ class AIPlayer:
 
     def select_playing_hand(self) -> List[Card]:
         """Select 5 cards to play from the 8-card hand."""
-        best_hand = PokerHandEvaluator.find_best_hand(self.player.hand)
+        best_hand = PokerHandEvaluator.find_best_hand_with_modifiers(self.player.hand, self.player)
         return best_hand.cards
 
     def place_auction_bid(self, game_state, opponent: Player) -> Tuple[bool, int]:
@@ -66,6 +66,23 @@ class AIPlayer:
             return (True, bid_amount)
 
         return (False, 0)
+
+    def decide_auction_turn_bids(self, game_state, opponent: Player) -> List[Tuple[int, int]]:
+        """Choose per-card bids for one auction turn in simultaneous-card auctions."""
+        bids: List[Tuple[int, int]] = []
+
+        cards = game_state.auction_state.revealed_cards
+        for idx, card in enumerate(cards):
+            min_raise = game_state.get_card_min_next_bid(idx)
+            card_value = self._evaluate_auction_card(card, opponent)
+
+            if card_value >= min_raise:
+                extra_raise = 0
+                if card_value > min_raise and random.random() < 0.35:
+                    extra_raise = min(card.minimum_bid, card_value - min_raise)
+                bids.append((idx, min_raise + extra_raise))
+
+        return bids
 
     def _evaluate_auction_card(self, card, opponent: Player) -> int:
         """Evaluate how valuable a card is to the AI."""

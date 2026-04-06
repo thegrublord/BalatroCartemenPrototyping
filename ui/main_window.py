@@ -3,16 +3,17 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QPushButton, QLabel, QGridLayout, QMessageBox, QScrollArea,
-    QSpinBox, QInputDialog, QDialog
+    QSpinBox, QInputDialog, QDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QFont, QColor, QIcon, QPixmap
 from typing import List, Optional
 from pathlib import Path
+from collections import Counter
 
 from game import (
     GameState, GamePhase, PokerHandEvaluator, ScoringRules, AIPlayer, Card,
-    JokerType, Planet
+    JokerType, Planet, HandRank, PokerHand
 )
 from ui.card_widgets import CardWidget
 from ui.panels import MomentumBar, PlayerInfoPanel, ActionLogPanel
@@ -40,6 +41,15 @@ class GameWindow(QMainWindow):
 
         # Current card widgets
         self.hand_widgets: List[CardWidget] = []
+        self.hand_section_label: Optional[QLabel] = None
+        self.hand_buttons_widget: Optional[QWidget] = None
+        self.hand_preview_label: Optional[QLabel] = None
+        self.played_frame: Optional[QFrame] = None
+        self.auction_board_frame: Optional[QFrame] = None
+        self.auction_board_grid: Optional[QGridLayout] = None
+        self.auction_cards_container: Optional[QWidget] = None
+        self.auction_turn_info_label: Optional[QLabel] = None
+        self.auction_end_turn_btn: Optional[QPushButton] = None
 
         # Auction controls
         self.auction_card_label: Optional[QLabel] = None
@@ -53,6 +63,7 @@ class GameWindow(QMainWindow):
         self.auction_frame: Optional[QFrame] = None
 
         # Center status widgets
+        self.title_label: Optional[QLabel] = None
         self.round_set_label: Optional[QLabel] = None
         self.player_points_value: Optional[QLabel] = None
         self.ai_points_value: Optional[QLabel] = None
@@ -201,11 +212,12 @@ class GameWindow(QMainWindow):
         layout = QVBoxLayout(center_frame)
 
         # Game title
-        title = QLabel("BALATRO CERTAMEN")
-        title.setFont(QFont("Bahnschrift", 20, QFont.Bold))
-        title.setStyleSheet("color: #c9a66b;")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+        self.title_label = QLabel("BALATRO CERTAMEN")
+        self.title_label.setFont(QFont("Bahnschrift", 20, QFont.Bold))
+        self.title_label.setStyleSheet("color: #c9a66b;")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setFixedHeight(44)
+        layout.addWidget(self.title_label)
 
         # Round and score header
         status_frame = QFrame()
@@ -294,8 +306,8 @@ class GameWindow(QMainWindow):
         layout.addWidget(status_frame)
 
         # Played hands display
-        played_frame = QFrame()
-        played_layout = QVBoxLayout(played_frame)
+        self.played_frame = QFrame()
+        played_layout = QVBoxLayout(self.played_frame)
         played_title = QLabel("PLAYED HANDS")
         played_title.setStyleSheet("color: #00d4ff; font-weight: bold;")
         played_layout.addWidget(played_title)
@@ -306,7 +318,7 @@ class GameWindow(QMainWindow):
         self.played_display.setMinimumHeight(60)
         played_layout.addWidget(self.played_display)
 
-        played_frame.setStyleSheet("""
+        self.played_frame.setStyleSheet("""
             QFrame {
                 background-color: #1a1a2e;
                 border: 1px solid #0f3460;
@@ -314,12 +326,72 @@ class GameWindow(QMainWindow):
                 padding: 10px;
             }
         """)
-        layout.addWidget(played_frame)
+        layout.addWidget(self.played_frame)
+
+        # Auction board (shown during auction; replaces played-hands block)
+        self.auction_board_frame = QFrame()
+        auction_board_layout = QVBoxLayout(self.auction_board_frame)
+        auction_board_layout.setContentsMargins(4, 4, 4, 4)
+        auction_board_layout.setSpacing(4)
+        auction_board_title = QLabel("AUCTION BOARD")
+        auction_board_title.setStyleSheet(
+            "color: #c9a66b; font-weight: bold; font-size: 10px; "
+            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 4px; padding: 1px 4px;"
+        )
+        auction_board_layout.addWidget(auction_board_title)
+
+        self.auction_turn_info_label = QLabel("Waiting for auction")
+        self.auction_turn_info_label.setStyleSheet(
+            "color: #d6deeb; font-size: 10px; "
+            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 4px; padding: 1px 4px;"
+        )
+        self.auction_turn_info_label.setWordWrap(True)
+        self.auction_turn_info_label.setFixedHeight(26)
+        auction_board_layout.addWidget(self.auction_turn_info_label)
+
+        self.auction_cards_container = QWidget()
+        self.auction_cards_container.setStyleSheet(
+            "background-color: #0f1419; border: 1px solid #2f3c7e; border-radius: 6px;"
+        )
+        self.auction_board_grid = QGridLayout(self.auction_cards_container)
+        self.auction_board_grid.setSpacing(4)
+        self.auction_board_grid.setContentsMargins(4, 4, 4, 4)
+        auction_board_layout.addWidget(self.auction_cards_container)
+
+        self.auction_end_turn_btn = QPushButton("END BIDDING TURN")
+        self.auction_end_turn_btn.setStyleSheet(
+            "QPushButton { background-color: #2d6a4f; color: #e9f5ee; font-weight: bold; padding: 4px; }"
+            "QPushButton:hover { background-color: #3a8a67; }"
+        )
+        self.auction_end_turn_btn.setFixedHeight(28)
+        self.auction_end_turn_btn.clicked.connect(self._handle_auction_end_turn)
+        auction_board_layout.addWidget(self.auction_end_turn_btn)
+
+        self.auction_board_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a1a2e;
+                border: 1px solid #0f3460;
+                border-radius: 5px;
+                padding: 3px;
+            }
+        """)
+        self.auction_board_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.auction_board_frame.setMaximumHeight(420)
+        self.auction_board_frame.setVisible(False)
+        layout.addWidget(self.auction_board_frame)
 
         # Player's hand
-        hand_section_label = QLabel("YOUR HAND")
-        hand_section_label.setStyleSheet("color: #00d4ff; font-weight: bold; margin-top: 10px;")
-        layout.addWidget(hand_section_label)
+        self.hand_section_label = QLabel("YOUR HAND")
+        self.hand_section_label.setStyleSheet("color: #00d4ff; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(self.hand_section_label)
+
+        self.hand_preview_label = QLabel("Select cards to preview projected hand value")
+        self.hand_preview_label.setWordWrap(True)
+        self.hand_preview_label.setStyleSheet(
+            "color: #d6deeb; background-color: #121c33; border: 1px solid #2f3c7e; "
+            "border-radius: 6px; padding: 6px;"
+        )
+        layout.addWidget(self.hand_preview_label)
 
         self.hand_scroll = QScrollArea()
         self.hand_scroll.setStyleSheet("""
@@ -339,7 +411,9 @@ class GameWindow(QMainWindow):
         layout.addWidget(self.hand_scroll)
 
         # Action buttons
-        button_layout = QHBoxLayout()
+        self.hand_buttons_widget = QWidget()
+        button_layout = QHBoxLayout(self.hand_buttons_widget)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
         self.play_btn = QPushButton("PLAY HAND (5 selected)")
         self.play_btn.setEnabled(False)
@@ -377,7 +451,7 @@ class GameWindow(QMainWindow):
         self.discard_btn.clicked.connect(self._handle_discard)
         button_layout.addWidget(self.discard_btn)
 
-        layout.addLayout(button_layout)
+        layout.addWidget(self.hand_buttons_widget)
 
         # Auction section
         self.auction_frame = QFrame()
@@ -535,24 +609,50 @@ class GameWindow(QMainWindow):
 
         # Update hand display
         self._update_hand_display()
+        self._update_hand_section_visibility()
+        self._update_center_header_layout()
 
         # Update played hands display
         self._update_played_hands_display()
 
         # Update auction panel
         self._update_auction_panel()
+        self._update_auction_board_ui()
 
         # Update auction preview
         self._update_auction_preview()
 
+        # Update selected hand preview
+        self._update_selected_hand_preview()
+
     def _update_played_hands_display(self):
         """Update the display of played hands."""
         if self.player_played_cards and self.ai_played_cards:
-            player_hand = PokerHandEvaluator.evaluate_hand(self.player_played_cards)
-            ai_hand = PokerHandEvaluator.evaluate_hand(self.ai_played_cards)
+            player_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                self.player_played_cards,
+                self.game_state.player,
+                self.game_state.round_disabled_jokers[0],
+            )
+            ai_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                self.ai_played_cards,
+                self.game_state.ai,
+                self.game_state.round_disabled_jokers[1],
+            )
             
-            player_score = ScoringRules.calculate_score(player_hand, self.game_state.player, self.game_state.ai)
-            ai_score = ScoringRules.calculate_score(ai_hand, self.game_state.ai, self.game_state.player)
+            player_score = ScoringRules.calculate_score(
+                player_hand,
+                self.game_state.player,
+                self.game_state.ai,
+                disabled_jokers=self.game_state.round_disabled_jokers[0],
+                opponent_disabled_jokers=self.game_state.round_disabled_jokers[1],
+            )
+            ai_score = ScoringRules.calculate_score(
+                ai_hand,
+                self.game_state.ai,
+                self.game_state.player,
+                disabled_jokers=self.game_state.round_disabled_jokers[1],
+                opponent_disabled_jokers=self.game_state.round_disabled_jokers[0],
+            )
             
             display_text = (
                 f"Player: {player_hand.hand_rank.name} = {player_score.final_score} pts\n"
@@ -560,7 +660,11 @@ class GameWindow(QMainWindow):
             )
             self.played_display.setText(display_text)
         elif self.player_played_cards:
-            player_hand = PokerHandEvaluator.evaluate_hand(self.player_played_cards)
+            player_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                self.player_played_cards,
+                self.game_state.player,
+                self.game_state.round_disabled_jokers[0],
+            )
             self.played_display.setText(f"Player played: {player_hand.hand_rank.name}\nWaiting for AI...")
         else:
             self.played_display.setText("Waiting for player action...")
@@ -585,49 +689,274 @@ class GameWindow(QMainWindow):
         is_set_play = self.game_state.current_phase == GamePhase.SET_PLAY
         self.play_btn.setEnabled(is_set_play and len(self.selected_cards) == 5)
         self.discard_btn.setEnabled(is_set_play and len(self.selected_cards) > 0)
+        self._update_selected_hand_preview()
+
+    def _update_hand_section_visibility(self):
+        """Hide hand UI during auction and show it otherwise."""
+        show_hand_section = self.game_state.current_phase != GamePhase.AUCTION
+
+        if self.hand_section_label is not None:
+            self.hand_section_label.setVisible(show_hand_section)
+        if self.hand_preview_label is not None:
+            self.hand_preview_label.setVisible(show_hand_section)
+        if hasattr(self, "hand_scroll") and self.hand_scroll is not None:
+            self.hand_scroll.setVisible(show_hand_section)
+        if self.hand_buttons_widget is not None:
+            self.hand_buttons_widget.setVisible(show_hand_section)
+
+    def _update_center_header_layout(self):
+        """Compact top header during auction to free vertical space for cards."""
+        if self.title_label is None or self.round_set_label is None:
+            return
+
+        in_auction = self.game_state.current_phase == GamePhase.AUCTION
+        if in_auction:
+            self.title_label.setFont(QFont("Bahnschrift", 14, QFont.Bold))
+            self.title_label.setFixedHeight(28)
+            self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 14px; font-weight: bold;")
+        else:
+            self.title_label.setFont(QFont("Bahnschrift", 20, QFont.Bold))
+            self.title_label.setFixedHeight(44)
+            self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 18px; font-weight: bold;")
+
+    def _update_selected_hand_preview(self):
+        """Show projected hand type/chips/mult/score for current card selections."""
+        if self.hand_preview_label is None:
+            return
+
+        selected = list(self.selected_cards)
+        if not selected:
+            self.hand_preview_label.setText("Select cards to preview projected hand value")
+            return
+
+        player = self.game_state.player
+        opponent = self.game_state.ai
+        disabled = self.game_state.round_disabled_jokers[0]
+        opponent_disabled = self.game_state.round_disabled_jokers[1]
+
+        # Use only selected cards for preview; do not auto-fill to 5 cards.
+        projected_hand = None
+        try:
+            if len(selected) > 5:
+                projected_hand = PokerHandEvaluator.find_best_hand_with_modifiers(selected, player, disabled)
+            elif len(selected) == 5:
+                projected_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(selected, player, disabled)
+            else:
+                projected_hand = self._evaluate_partial_hand_with_modifiers(selected, player, disabled)
+        except Exception:
+            projected_hand = None
+
+        if projected_hand is None:
+            self.hand_preview_label.setText(
+                f"Selected: {len(selected)} card(s) | Need more cards for a valid projection"
+            )
+            return
+
+        projected_score = ScoringRules.calculate_score(
+            projected_hand,
+            player,
+            opponent,
+            disabled_jokers=disabled,
+            opponent_disabled_jokers=opponent_disabled,
+        )
+
+        total_chips = (
+            projected_score.base_chips
+            + projected_score.planet_chips
+            + projected_score.card_chips
+            + projected_score.joker_chip_bonus
+        )
+        additive_mult = projected_score.base_mult + projected_score.planet_mult + projected_score.joker_mult_bonus
+        hand_name = ScoringRules.get_hand_name(projected_hand.hand_rank)
+
+        self.hand_preview_label.setText(
+            f"Selected: {len(selected)}/5 | Hand: {hand_name}\n"
+            f"Chips: {total_chips} | Mult: {additive_mult} x {projected_score.joker_x_mult:.2f}\n"
+            f"Projected Score: {projected_score.final_score}"
+        )
+
+    def _evaluate_partial_hand_with_modifiers(
+        self,
+        cards: List[Card],
+        player,
+        disabled_jokers,
+    ) -> PokerHand:
+        """Evaluate selected cards as a variable-size hand (2-4 cards)."""
+        if not cards:
+            raise ValueError("No cards selected")
+
+        sorted_cards = sorted(cards, key=lambda c: c.rank.rank_order(), reverse=True)
+        active_jokers = [j for j in player.jokers if j not in disabled_jokers]
+
+        normalized_suits = [PokerHandEvaluator._normalize_suit(c.suit, active_jokers) for c in sorted_cards]
+        suit_counts = Counter(normalized_suits)
+
+        n = len(sorted_cards)
+        has_four_fingers = any(j.type == JokerType.FOUR_FINGERS for j in active_jokers)
+        has_shortcut = any(j.type == JokerType.SHORTCUT for j in active_jokers)
+
+        flush_required = 4 if has_four_fingers else 5
+        is_flush = n >= flush_required and max(suit_counts.values()) >= flush_required
+
+        ranks = [c.rank.rank_order() for c in sorted_cards]
+        straight_required = 4 if has_shortcut else 5
+        is_straight = self._is_partial_straight(ranks, has_shortcut, straight_required)
+
+        rank_counts = Counter([c.rank for c in sorted_cards])
+        count_values = sorted(rank_counts.values(), reverse=True)
+
+        if is_straight and is_flush:
+            hand_rank = HandRank.STRAIGHT_FLUSH
+        elif n >= 4 and count_values[0] == 4:
+            hand_rank = HandRank.FOUR_OF_A_KIND
+        elif n >= 5 and count_values[0] == 3 and len(count_values) > 1 and count_values[1] >= 2:
+            hand_rank = HandRank.FULL_HOUSE
+        elif is_flush:
+            hand_rank = HandRank.FLUSH
+        elif is_straight:
+            hand_rank = HandRank.STRAIGHT
+        elif n >= 3 and count_values[0] == 3:
+            hand_rank = HandRank.THREE_OF_A_KIND
+        elif n >= 4 and count_values.count(2) >= 2:
+            hand_rank = HandRank.TWO_PAIR
+        elif n >= 2 and count_values[0] == 2:
+            hand_rank = HandRank.PAIR
+        else:
+            hand_rank = HandRank.HIGH_CARD
+
+        return PokerHand(cards=sorted_cards, hand_rank=hand_rank, high_card=sorted_cards[0].rank)
+
+    @staticmethod
+    def _is_partial_straight(ranks: List[int], has_shortcut: bool, required_cards: int) -> bool:
+        """Evaluate straight for variable-size selected cards."""
+        if len(ranks) < required_cards:
+            return False
+
+        unique = set(ranks)
+        if len(unique) != len(ranks):
+            return False
+
+        if 14 in unique:
+            unique.add(1)
+
+        ordered = sorted(unique)
+        n = len(ranks)
+        if len(ordered) < required_cards:
+            return False
+
+        span = ordered[-1] - ordered[0]
+        if not has_shortcut:
+            return required_cards == 5 and span == 4
+
+        # Shortcut allows one-rank gap but only at 4+ selected cards.
+        return span <= required_cards
 
     def _update_auction_panel(self):
-        """Update auction UI based on game state."""
+        """Legacy auction panel is hidden in favor of the auction board."""
+        self.auction_frame.setVisible(False)
+
+    def _update_auction_board_ui(self):
+        """Render simultaneous 5-card auction board during auction phase."""
         in_auction = self.game_state.current_phase == GamePhase.AUCTION and self.game_state.auction_state.is_active
-        self.auction_frame.setVisible(in_auction)
+
+        self.auction_board_frame.setVisible(in_auction)
+        self.played_frame.setVisible(not in_auction)
+        # Keep auction board compact only during auction, while normal set-play uses full center space.
+        self.auction_board_frame.setMaximumHeight(420 if in_auction else 16777215)
 
         if not in_auction:
-            self._set_auction_controls_enabled(False)
             return
 
-        card = self.game_state.get_current_auction_card()
-        if card is None:
-            self.auction_card_label.setText("Auction complete")
-            self.auction_bid_label.setText("Bid: -")
-            self.auction_turn_label.setText("Turn: -")
-            self._set_auction_controls_enabled(False)
-            return
-
-        leader = self.game_state.auction_state.current_leader
-        leader_text = "None" if leader == -1 else ("Player" if leader == 0 else "AI")
-        min_next = self.game_state.get_min_next_bid()
         next_bidder = self.game_state.get_next_auction_bidder()
-        turn_text = "Player" if next_bidder == 0 else ("AI" if next_bidder == 1 else "Resolving")
-
-        self.auction_card_label.setText(
-            f"Card {self.game_state.auction_state.current_card_index + 1}/"
-            f"{len(self.game_state.auction_state.revealed_cards)}: {card} "
-            f"(Min {card.minimum_bid})"
-        )
-        self.auction_bid_label.setText(
-            f"Current Bid: {self.game_state.auction_state.current_bid} | "
-            f"Leader: {leader_text} | Next Legal: {min_next}"
-        )
-        self.auction_turn_label.setText(
-            f"Turn {self.game_state.auction_state.turn_index + 1}/4 | Next: {turn_text} | "
+        next_text = "Player" if next_bidder == 0 else ("AI" if next_bidder == 1 else "Resolving")
+        self.auction_turn_info_label.setText(
+            f"Turn {self.game_state.auction_state.turn_index + 1}/4 | Next: {next_text} | "
             f"Spent P:{self.game_state.auction_state.player_spent} AI:{self.game_state.auction_state.ai_spent}"
         )
+        self.auction_end_turn_btn.setEnabled(next_bidder == 0)
 
-        self.auction_custom_bid_input.setMinimum(min_next)
-        if self.auction_custom_bid_input.value() < min_next:
-            self.auction_custom_bid_input.setValue(min_next)
+        # Rebuild auction card widgets each refresh for correctness over complexity.
+        while self.auction_board_grid.count():
+            item = self.auction_board_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-        self._set_auction_controls_enabled(next_bidder == 0)
+        for idx, card in enumerate(self.game_state.auction_state.revealed_cards):
+            frame = QFrame()
+            frame.setStyleSheet("background-color: #121c33; border: 1px solid #2a3d66; border-radius: 8px;")
+            outer = QHBoxLayout(frame)
+            outer.setContentsMargins(6, 6, 6, 6)
+            outer.setSpacing(8)
+
+            image = QLabel("Image Missing")
+            image.setAlignment(Qt.AlignCenter)
+            image.setFixedSize(96, 96)
+            image.setStyleSheet("background-color: #0c1223; border: 1px solid #2f3c7e; border-radius: 6px;")
+            image_path = self._get_auction_card_image_path(card)
+            if image_path and image_path.exists():
+                pixmap = QPixmap(str(image_path))
+                if not pixmap.isNull():
+                    image.setPixmap(pixmap.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    image.setText("")
+            outer.addWidget(image)
+
+            details = QWidget()
+            details_layout = QVBoxLayout(details)
+            details_layout.setContentsMargins(0, 0, 0, 0)
+            details_layout.setSpacing(4)
+
+            name = QLabel(str(card))
+            name.setWordWrap(True)
+            name.setStyleSheet("color: #c9a66b; font-weight: bold; font-size: 11px;")
+            details_layout.addWidget(name)
+
+            desc = QLabel(self._get_auction_card_description(card))
+            desc.setWordWrap(True)
+            desc.setStyleSheet(
+                "color: #c8d3e6; font-size: 10px; "
+                "background-color: #172443; border: 1px solid #2d4270; border-radius: 6px; padding: 4px;"
+            )
+            details_layout.addWidget(desc)
+
+            current_bid = self.game_state.auction_state.card_bids[idx]
+            leader = self.game_state.auction_state.card_leaders[idx]
+            leader_text = "None" if leader == -1 else ("Player" if leader == 0 else "AI")
+            min_next = self.game_state.get_card_min_next_bid(idx)
+            info = QLabel(
+                f"Min: {card.minimum_bid} | Bid: {current_bid}\nLeader: {leader_text} | Next: {min_next}"
+            )
+            info.setWordWrap(True)
+            info.setStyleSheet(
+                "color: #9fd8ff; font-size: 10px; "
+                "background-color: #172443; border: 1px solid #2d4270; border-radius: 6px; padding: 4px;"
+            )
+            details_layout.addWidget(info)
+
+            button_row = QHBoxLayout()
+            button_row.setSpacing(4)
+
+            bid_btn = QPushButton("Bid +Min")
+            bid_btn.setEnabled(next_bidder == 0)
+            bid_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_bid(card_idx))
+            bid_btn.setStyleSheet("padding: 4px; font-size: 10px;")
+            bid_btn.setFixedHeight(24)
+            button_row.addWidget(bid_btn)
+
+            reduce_btn = QPushButton("Bid -Min")
+            reduce_btn.setEnabled(next_bidder == 0)
+            reduce_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_reduce(card_idx))
+            reduce_btn.setStyleSheet(
+                "padding: 4px; font-size: 10px; background-color: #40312a; border: 1px solid #6f5346;"
+            )
+            reduce_btn.setFixedHeight(24)
+            button_row.addWidget(reduce_btn)
+
+            details_layout.addLayout(button_row)
+            outer.addWidget(details, 1)
+
+            row = idx // 2
+            col = idx % 2
+            self.auction_board_grid.addWidget(frame, row, col)
 
     def _set_auction_controls_enabled(self, enabled: bool):
         """Enable/disable interactive auction controls."""
@@ -892,34 +1221,29 @@ class GameWindow(QMainWindow):
         fallback = base / f"planet_{planet.name.lower()}.webp"
         return preferred if preferred.exists() else fallback
 
-    def _on_card_clicked(self, card: Card):
+    def _on_card_clicked(self, card_widget: CardWidget):
         """Handle card click."""
         if self.game_state.current_phase != GamePhase.SET_PLAY:
             return
 
-        # Find the widget for this card
-        widget = None
-        for w in self.hand_widgets:
-            if w.card == card:
-                widget = w
-                break
-
-        if not widget:
+        if card_widget not in self.hand_widgets:
             return
 
-        # Toggle selection
-        if card in self.selected_cards:
-            self.selected_cards.remove(card)
-            self.selected_card_widgets.remove(widget)
-            widget.set_selected(False)
+        # Track by widget identity so duplicate value cards can be selected independently.
+        if card_widget in self.selected_card_widgets:
+            idx = self.selected_card_widgets.index(card_widget)
+            self.selected_card_widgets.pop(idx)
+            self.selected_cards.pop(idx)
+            card_widget.set_selected(False)
         else:
-            self.selected_cards.append(card)
-            self.selected_card_widgets.append(widget)
-            widget.set_selected(True)
+            self.selected_card_widgets.append(card_widget)
+            self.selected_cards.append(card_widget.card)
+            card_widget.set_selected(True)
 
         # Update buttons
         self.play_btn.setEnabled(len(self.selected_cards) == 5)
         self.discard_btn.setEnabled(len(self.selected_cards) > 0)
+        self._update_selected_hand_preview()
 
     def _handle_play_hand(self):
         """Handle play hand button click."""
@@ -932,7 +1256,11 @@ class GameWindow(QMainWindow):
 
         # Validate it's a legal hand
         try:
-            hand = PokerHandEvaluator.evaluate_hand(self.selected_cards)
+            hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                self.selected_cards,
+                self.game_state.player,
+                self.game_state.round_disabled_jokers[0],
+            )
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Invalid hand: {e}")
             return
@@ -944,7 +1272,13 @@ class GameWindow(QMainWindow):
         for card in self.selected_cards:
             self.game_state.player.hand.remove(card)
 
-        hand_score = ScoringRules.calculate_score(hand, self.game_state.player, self.game_state.ai)
+        hand_score = ScoringRules.calculate_score(
+            hand,
+            self.game_state.player,
+            self.game_state.ai,
+            disabled_jokers=self.game_state.round_disabled_jokers[0],
+            opponent_disabled_jokers=self.game_state.round_disabled_jokers[1],
+        )
         self.action_log.add_log_entry(f"Player played {hand.hand_rank.name}: {hand_score.final_score} pts")
 
         # Clear selection
@@ -991,36 +1325,48 @@ class GameWindow(QMainWindow):
 
     def _handle_auction_min_raise(self):
         """Place the minimum legal raise for the human bidder."""
-        if self.game_state.get_next_auction_bidder() != 0:
-            return
-
-        bid = self.game_state.get_min_next_bid()
-        if self.game_state.place_auction_bid(0, bid):
-            self.action_log.add_log_entry(f"Player bids {bid}")
-            self._after_auction_action()
+        # Legacy single-card control hidden in current auction UX.
+        return
 
     def _handle_auction_custom_bid(self):
         """Place a custom legal bid for the human bidder."""
-        if self.game_state.get_next_auction_bidder() != 0:
-            return
-
-        bid = self.auction_custom_bid_input.value()
-        min_bid = self.game_state.get_min_next_bid()
-        if bid < min_bid:
-            QMessageBox.warning(self, "Invalid Bid", f"Bid must be at least {min_bid}.")
-            return
-
-        if self.game_state.place_auction_bid(0, bid):
-            self.action_log.add_log_entry(f"Player bids {bid}")
-            self._after_auction_action()
+        # Legacy single-card control hidden in current auction UX.
+        return
 
     def _handle_auction_pass(self):
         """Pass on current auction turn for the human bidder."""
+        # Legacy single-card control hidden in current auction UX.
+        return
+
+    def _handle_auction_card_bid(self, card_index: int):
+        """Bid minimum raise on a specific auction card during player's turn."""
         if self.game_state.get_next_auction_bidder() != 0:
             return
 
-        if self.game_state.pass_auction_bid(0):
-            self.action_log.add_log_entry("Player passes")
+        min_bid = self.game_state.get_card_min_next_bid(card_index)
+        if self.game_state.place_auction_bid_for_card(0, card_index, min_bid):
+            card_name = str(self.game_state.auction_state.revealed_cards[card_index])
+            self.action_log.add_log_entry(f"Player bids {min_bid} on {card_name}")
+            self._update_display()
+
+    def _handle_auction_card_reduce(self, card_index: int):
+        """Reduce player's bid by card minimum on a specific auction card."""
+        if self.game_state.get_next_auction_bidder() != 0:
+            return
+
+        if self.game_state.reduce_auction_bid_for_card(0, card_index):
+            card_name = str(self.game_state.auction_state.revealed_cards[card_index])
+            reduced_to = self.game_state.auction_state.card_player_bids[card_index]
+            self.action_log.add_log_entry(f"Player reduces bid to {reduced_to} on {card_name}")
+            self._update_display()
+
+    def _handle_auction_end_turn(self):
+        """End player's auction turn and pass bidding control to AI."""
+        if self.game_state.get_next_auction_bidder() != 0:
+            return
+
+        if self.game_state.end_auction_turn(0):
+            self.action_log.add_log_entry("Player ends bidding turn")
             self._after_auction_action()
 
     def _handle_human_joker_overflow(self):
@@ -1105,8 +1451,18 @@ class GameWindow(QMainWindow):
                 for card in ai_hand_cards:
                     self.game_state.ai.hand.remove(card)
 
-                ai_hand = PokerHandEvaluator.evaluate_hand(ai_hand_cards)
-                ai_score = ScoringRules.calculate_score(ai_hand, self.game_state.ai, self.game_state.player)
+                ai_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                    ai_hand_cards,
+                    self.game_state.ai,
+                    self.game_state.round_disabled_jokers[1],
+                )
+                ai_score = ScoringRules.calculate_score(
+                    ai_hand,
+                    self.game_state.ai,
+                    self.game_state.player,
+                    disabled_jokers=self.game_state.round_disabled_jokers[1],
+                    opponent_disabled_jokers=self.game_state.round_disabled_jokers[0],
+                )
                 self.action_log.add_log_entry(f"AI played {ai_hand.hand_rank.name}: {ai_score.final_score} pts")
 
                 self._update_played_hands_display()
@@ -1129,12 +1485,14 @@ class GameWindow(QMainWindow):
         if self.game_state.get_next_auction_bidder() != 1:
             return
 
-        should_bid, bid_amount = self.ai.place_auction_bid(self.game_state, self.game_state.player)
-        if should_bid and self.game_state.place_auction_bid(1, bid_amount):
-            self.action_log.add_log_entry(f"AI bids {bid_amount}")
-        else:
-            self.game_state.pass_auction_bid(1)
-            self.action_log.add_log_entry("AI passes")
+        bids = self.ai.decide_auction_turn_bids(self.game_state, self.game_state.player)
+        for card_index, bid_amount in bids:
+            if self.game_state.place_auction_bid_for_card(1, card_index, bid_amount):
+                card_name = str(self.game_state.auction_state.revealed_cards[card_index])
+                self.action_log.add_log_entry(f"AI bids {bid_amount} on {card_name}")
+
+        self.game_state.end_auction_turn(1)
+        self.action_log.add_log_entry("AI ends bidding turn")
 
         self._after_auction_action()
 

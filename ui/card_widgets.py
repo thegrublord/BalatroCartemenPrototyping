@@ -9,7 +9,7 @@ from game.models import Card, Suit
 class CardWidget(QWidget):
     """A single card display widget."""
     
-    clicked = Signal(object)  # Emits the Card object
+    clicked = Signal(object)  # Emits the CardWidget instance
     
     def __init__(self, card: Card, parent=None):
         super().__init__(parent)
@@ -27,7 +27,7 @@ class CardWidget(QWidget):
         
     def mousePressEvent(self, event):
         """Handle click."""
-        self.clicked.emit(self.card)
+        self.clicked.emit(self)
         
     def enterEvent(self, event):
         """Handle mouse enter."""

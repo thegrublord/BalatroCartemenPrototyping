@@ -39,6 +39,10 @@ class GameState:
         # Round tracking
         self.round_winner = None  # 0 for player, 1 for AI
         self.last_auction_first_bidder = 0
+        self.round_disabled_jokers = {
+            0: [],  # Human jokers disabled for current round
+            1: [],  # AI jokers disabled for current round
+        }
 
         # Action log
         self.action_log: List[str] = []
@@ -72,6 +76,24 @@ class GameState:
         self.auction_deck = []
         card_id = 0
 
+        joker_min_bid_by_rarity = {
+            "Common": 100,
+            "Rare": 250,
+            "Legendary": 500,
+        }
+
+        planet_min_bid = {
+            Planet.PLUTO: 100,
+            Planet.MERCURY: 100,
+            Planet.URANUS: 100,
+            Planet.VENUS: 150,
+            Planet.SATURN: 250,
+            Planet.JUPITER: 150,
+            Planet.EARTH: 250,
+            Planet.MARS: 250,
+            Planet.NEPTUNE: 300,
+        }
+
         # Add all jokers (5 copies each for strategy)
         for jtype in JokerType:
             for _ in range(2):  # 2 copies of each joker
@@ -80,7 +102,7 @@ class GameState:
                     is_joker=True,
                     is_planet=False,
                     joker_type=jtype,
-                    minimum_bid=5 if jtype.value == "Common" else (10 if jtype.value == "Rare" else 20)
+                    minimum_bid=joker_min_bid_by_rarity.get(jtype.value, 100)
                 ))
                 card_id += 1
 
@@ -92,7 +114,7 @@ class GameState:
                     is_joker=False,
                     is_planet=True,
                     planet_type=planet,
-                    minimum_bid=8
+                    minimum_bid=planet_min_bid.get(planet, 100)
                 ))
                 card_id += 1
 
@@ -111,14 +133,17 @@ class GameState:
 
     def start_set(self):
         """Start a new set within a round."""
-        # Reset hands if starting a new round
+        # Reset round state and deal fresh hands at round start.
         if self.current_set == 1:
             self.player.reset_round()
             self.ai.reset_round()
+            self._apply_round_discard_modifiers()
+            self.round_disabled_jokers = {0: [], 1: []}
 
-        # Draw to 8 cards
-        self.player.hand = []
-        self.ai.hand = []
+            self.player.hand = []
+            self.ai.hand = []
+
+        # Between sets in the same round, keep remaining cards and refill to 8.
 
         while len(self.player.hand) < 8:
             self.draw_cards(self.player, 1)
@@ -130,11 +155,31 @@ class GameState:
 
     def score_set(self, player_cards: List[Card], ai_cards: List[Card]):
         """Score a set based on played hands."""
-        player_hand = PokerHandEvaluator.evaluate_hand(player_cards)
-        ai_hand = PokerHandEvaluator.evaluate_hand(ai_cards)
+        player_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+            player_cards, self.player, self.round_disabled_jokers[0]
+        )
+        ai_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+            ai_cards, self.ai, self.round_disabled_jokers[1]
+        )
 
-        player_score = ScoringRules.calculate_score(player_hand, self.player, self.ai)
-        ai_score = ScoringRules.calculate_score(ai_hand, self.ai, self.player)
+        # Copyright: same hand type disables one opponent joker for the round.
+        if player_hand.hand_rank == ai_hand.hand_rank:
+            self._apply_copyright_round_disable()
+
+        player_score = ScoringRules.calculate_score(
+            player_hand,
+            self.player,
+            self.ai,
+            disabled_jokers=self.round_disabled_jokers[0],
+            opponent_disabled_jokers=self.round_disabled_jokers[1],
+        )
+        ai_score = ScoringRules.calculate_score(
+            ai_hand,
+            self.ai,
+            self.player,
+            disabled_jokers=self.round_disabled_jokers[1],
+            opponent_disabled_jokers=self.round_disabled_jokers[0],
+        )
 
         self.player.round_score += player_score.final_score
         self.ai.round_score += ai_score.final_score
@@ -146,6 +191,49 @@ class GameState:
         )
 
         return player_score, ai_score
+
+    def _apply_round_discard_modifiers(self):
+        """Apply SCRAPPY/STRAITJACKET effects for the whole round."""
+        player_scrappy = sum(1 for j in self.player.jokers if j.type == JokerType.SCRAPPY)
+        ai_scrappy = sum(1 for j in self.ai.jokers if j.type == JokerType.SCRAPPY)
+        player_jacketed = sum(1 for j in self.ai.jokers if j.type == JokerType.STRAITJACKET)
+        ai_jacketed = sum(1 for j in self.player.jokers if j.type == JokerType.STRAITJACKET)
+
+        self.player.discard_actions_max = max(0, 2 + player_scrappy - player_jacketed)
+        self.ai.discard_actions_max = max(0, 2 + ai_scrappy - ai_jacketed)
+
+    def _apply_copyright_round_disable(self):
+        """Disable one opponent joker for the entire round when COPYRIGHT triggers."""
+        if self._player_has_active_joker(self.player, JokerType.COPYRIGHT, 0):
+            target = self._pick_highest_value_active_joker(self.ai, 1)
+            if target is not None:
+                self.round_disabled_jokers[1].append(target)
+                self.add_action(f"COPYRIGHT: Player disables AI joker {target}")
+
+        if self._player_has_active_joker(self.ai, JokerType.COPYRIGHT, 1):
+            target = self._pick_highest_value_active_joker(self.player, 0)
+            if target is not None:
+                self.round_disabled_jokers[0].append(target)
+                self.add_action(f"COPYRIGHT: AI disables Player joker {target}")
+
+    def _player_has_active_joker(self, player: Player, jtype: JokerType, player_index: int) -> bool:
+        """Check if player has at least one active (non-disabled) joker type."""
+        disabled = self.round_disabled_jokers[player_index]
+        for joker in player.jokers:
+            if joker.type == jtype and joker not in disabled:
+                return True
+        return False
+
+    def _pick_highest_value_active_joker(self, target: Player, target_index: int) -> Optional[Joker]:
+        """Pick strongest active target joker for automatic COPYRIGHT behavior."""
+        disabled = self.round_disabled_jokers[target_index]
+        active = [
+            j for j in target.jokers
+            if j not in disabled and j.type != JokerType.COPYRIGHT
+        ]
+        if not active:
+            return None
+        return max(active, key=lambda j: self._ai_joker_value(j.type))
 
     def end_set(self):
         """End the current set and check if round is over."""
@@ -186,13 +274,29 @@ class GameState:
 
     def start_auction(self):
         """Start the auction phase."""
+        # Round hand leftovers are not shown/used during auction.
+        self.player.hand = []
+        self.ai.hand = []
+
         # Reveal 5 cards
         self.auction_state.revealed_cards = []
-        for _ in range(5):
-            if self.auction_deck:
-                self.auction_state.revealed_cards.append(self.auction_deck.pop(0))
+        revealed_keys = set()
+        deck_index = 0
+        while len(self.auction_state.revealed_cards) < 5 and deck_index < len(self.auction_deck):
+            card = self.auction_deck[deck_index]
+            key = self._auction_card_key(card)
+            if key not in revealed_keys:
+                revealed_keys.add(key)
+                self.auction_state.revealed_cards.append(card)
+                self.auction_deck.pop(deck_index)
+                continue
+            deck_index += 1
 
         self.auction_state.current_card_index = 0
+        self.auction_state.card_bids = [0 for _ in self.auction_state.revealed_cards]
+        self.auction_state.card_leaders = [-1 for _ in self.auction_state.revealed_cards]
+        self.auction_state.card_player_bids = [0 for _ in self.auction_state.revealed_cards]
+        self.auction_state.card_ai_bids = [0 for _ in self.auction_state.revealed_cards]
         self.auction_state.first_bidder = self.round_winner if self.round_winner is not None else 0
         self.last_auction_first_bidder = self.auction_state.first_bidder
         self.auction_state.turn_index = 0
@@ -209,23 +313,39 @@ class GameState:
             f"First bidder: {'Player' if self.auction_state.first_bidder == 0 else 'AI'}."
         )
 
+    @staticmethod
+    def _auction_card_key(card: AuctionCard):
+        """Unique key for duplicate prevention within a single reveal."""
+        if card.is_joker and card.joker_type is not None:
+            return ("joker", card.joker_type)
+        if card.is_planet and card.planet_type is not None:
+            return ("planet", card.planet_type)
+        return ("unknown", card.id)
+
     def get_current_auction_card(self) -> Optional[AuctionCard]:
-        """Get the card currently being auctioned."""
+        """Get a representative auction card for preview panes."""
         if not self.auction_state.is_active:
             return None
-        idx = self.auction_state.current_card_index
-        if idx < 0 or idx >= len(self.auction_state.revealed_cards):
+        if not self.auction_state.revealed_cards:
             return None
-        return self.auction_state.revealed_cards[idx]
+        return self.auction_state.revealed_cards[0]
+
+    def get_card_min_next_bid(self, card_index: int) -> int:
+        """Get next legal bid for a specific revealed auction card."""
+        if card_index < 0 or card_index >= len(self.auction_state.revealed_cards):
+            return 0
+
+        current_bid = self.auction_state.card_bids[card_index]
+        minimum = self.auction_state.revealed_cards[card_index].minimum_bid
+        if current_bid == 0:
+            return minimum
+        return current_bid + minimum
 
     def get_min_next_bid(self) -> int:
         """Get the minimum legal next bid for the current auction card."""
-        card = self.get_current_auction_card()
-        if card is None:
+        if not self.auction_state.revealed_cards:
             return 0
-        if self.auction_state.current_bid == 0:
-            return card.minimum_bid
-        return self.auction_state.current_bid + card.minimum_bid
+        return self.get_card_min_next_bid(0)
 
     def get_next_auction_bidder(self) -> int:
         """Get the next player who should bid (0=player, 1=ai)."""
@@ -242,38 +362,112 @@ class GameState:
 
     def place_auction_bid(self, player_index: int, bid_amount: int) -> bool:
         """Place a bid in the auction."""
+        return self.place_auction_bid_for_card(player_index, 0, bid_amount)
+
+    def place_auction_bid_for_card(self, player_index: int, card_index: int, bid_amount: int) -> bool:
+        """Place a bid on a specific revealed card during the current turn."""
         if not self.auction_state.is_active:
             return False
 
         if player_index != self.get_next_auction_bidder():
             return False
 
-        card = self.get_current_auction_card()
-        if card is None:
+        if card_index < 0 or card_index >= len(self.auction_state.revealed_cards):
             return False
 
+        card = self.auction_state.revealed_cards[card_index]
+
         # Check if bid is legal.
-        min_next_bid = self.get_min_next_bid()
+        min_next_bid = self.get_card_min_next_bid(card_index)
 
         if bid_amount < min_next_bid:
             return False
 
         # Place the bid
-        self.auction_state.current_bid = bid_amount
-        self.auction_state.current_leader = player_index
+        if player_index == 0:
+            self.auction_state.card_player_bids[card_index] = bid_amount
+        else:
+            self.auction_state.card_ai_bids[card_index] = bid_amount
+
+        self._sync_card_leader_and_bid(card_index)
+        # Legacy fields kept synced for any preview logic.
+        self.auction_state.current_bid = self.auction_state.card_bids[card_index]
+        self.auction_state.current_leader = self.auction_state.card_leaders[card_index]
         self.auction_state.last_bidder = player_index
-        self.auction_state.turn_index += 1
 
         bidder_name = "Player" if player_index == 0 else "AI"
         self.add_action(f"{bidder_name} bids {bid_amount} on {card}")
 
-        if self.auction_state.turn_index >= 4:
-            self._resolve_current_auction_card()
-
         return True
 
+    def reduce_auction_bid_for_card(self, player_index: int, card_index: int) -> bool:
+        """Reduce a bidder's current offer on a revealed card by the card minimum (floor 0)."""
+        if not self.auction_state.is_active:
+            return False
+
+        if player_index != self.get_next_auction_bidder():
+            return False
+
+        if card_index < 0 or card_index >= len(self.auction_state.revealed_cards):
+            return False
+
+        minimum_step = self.auction_state.revealed_cards[card_index].minimum_bid
+        if player_index == 0:
+            current = self.auction_state.card_player_bids[card_index]
+            if current <= 0:
+                return False
+            self.auction_state.card_player_bids[card_index] = max(0, current - minimum_step)
+        else:
+            current = self.auction_state.card_ai_bids[card_index]
+            if current <= 0:
+                return False
+            self.auction_state.card_ai_bids[card_index] = max(0, current - minimum_step)
+
+        self._sync_card_leader_and_bid(card_index)
+        self.auction_state.current_bid = self.auction_state.card_bids[card_index]
+        self.auction_state.current_leader = self.auction_state.card_leaders[card_index]
+        self.auction_state.last_bidder = player_index
+
+        bidder_name = "Player" if player_index == 0 else "AI"
+        card = self.auction_state.revealed_cards[card_index]
+        reduced_to = self.auction_state.card_player_bids[card_index] if player_index == 0 else self.auction_state.card_ai_bids[card_index]
+        self.add_action(f"{bidder_name} reduces bid to {reduced_to} on {card}")
+        return True
+
+    def _sync_card_leader_and_bid(self, card_index: int):
+        """Sync aggregate bid/leader from per-player card bids."""
+        player_bid = self.auction_state.card_player_bids[card_index]
+        ai_bid = self.auction_state.card_ai_bids[card_index]
+        previous_leader = self.auction_state.card_leaders[card_index]
+
+        if player_bid == 0 and ai_bid == 0:
+            self.auction_state.card_bids[card_index] = 0
+            self.auction_state.card_leaders[card_index] = -1
+            return
+
+        if player_bid > ai_bid:
+            self.auction_state.card_bids[card_index] = player_bid
+            self.auction_state.card_leaders[card_index] = 0
+            return
+
+        if ai_bid > player_bid:
+            self.auction_state.card_bids[card_index] = ai_bid
+            self.auction_state.card_leaders[card_index] = 1
+            return
+
+        # Tie: preserve current leader when possible, otherwise use auction first bidder.
+        self.auction_state.card_bids[card_index] = player_bid
+        if previous_leader in (0, 1):
+            self.auction_state.card_leaders[card_index] = previous_leader
+        else:
+            self.auction_state.card_leaders[card_index] = self.auction_state.first_bidder
+
     def pass_auction_bid(self, player_index: int) -> bool:
-        """Pass on the current auction bid."""
+        """Pass and end turn in auction."""
+        return self.end_auction_turn(player_index)
+
+    def end_auction_turn(self, player_index: int) -> bool:
+        """End bidder's turn (pass priority to the other side)."""
         if not self.auction_state.is_active:
             return False
 
@@ -281,18 +475,34 @@ class GameState:
             return False
 
         bidder_name = "Player" if player_index == 0 else "AI"
-        card = self.get_current_auction_card()
-        self.add_action(f"{bidder_name} passes on {card}")
+        self.add_action(f"{bidder_name} ends bidding turn")
 
         self.auction_state.turn_index += 1
 
-        # If a bidder exists and the opponent passes, award immediately.
-        if self.auction_state.current_leader != -1 and player_index != self.auction_state.current_leader:
-            self._resolve_current_auction_card()
-        elif self.auction_state.turn_index >= 4:
-            self._resolve_current_auction_card()
+        if self.auction_state.turn_index >= 4:
+            self._resolve_all_auction_cards()
 
         return True
+
+    def _resolve_all_auction_cards(self):
+        """Resolve all revealed cards after all bidding turns complete."""
+        for idx, card in enumerate(self.auction_state.revealed_cards):
+            leader = self.auction_state.card_leaders[idx]
+            winning_bid = self.auction_state.card_bids[idx]
+
+            if leader == -1 or winning_bid <= 0:
+                self.add_action(f"{card} is unsold.")
+                continue
+
+            winner = self.player if leader == 0 else self.ai
+            self._apply_auction_card(leader, card)
+            if leader == 0:
+                self.auction_state.player_spent += winning_bid
+            else:
+                self.auction_state.ai_spent += winning_bid
+            self.add_action(f"{winner.name} won {card} for {winning_bid} momentum")
+
+        self._finish_auction()
 
     def _resolve_current_auction_card(self):
         """Resolve the current auction card after 4 turns."""
