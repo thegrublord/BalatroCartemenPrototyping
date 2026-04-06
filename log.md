@@ -1,5 +1,72 @@
 # Change Log
 
+## 2026-04-06 - Prompt 35 (Panel Spacer Placement Fix)
+- Repositioned left panel stretch spacer to below the NEW GAME button so the button no longer gets pushed downward by extra column space.
+- Updated right panel layout to remove stretch weighting from Action Log and place a bottom spacer after both sections.
+- This keeps extra black space at the bottom of side columns rather than between Human/Latest Event sections.
+
+## 2026-04-06 - Prompt 34 (Side Panel Height Restore)
+- Extended the first-round layout snapshot to include left/right panel section heights.
+- Restored fixed heights for:
+  - Human details panel
+  - AI details panel
+  - Action Log panel (including Latest Event region)
+- This keeps side columns from stretching vertically after auction transitions.
+
+## 2026-04-06 - Prompt 33 (Top-Aligned Center Column)
+- Anchored the center column to the top of the main layout in fullscreen so it no longer floats vertically after auction.
+- Changed the center frame from fixed-height to preferred-height sizing, then forced a layout/size refresh after restoring the first-round state.
+- This should keep the round UI in the same vertical position as the first round without requiring a fullscreen toggle.
+
+## 2026-04-06 - Prompt 32 (Center Column Height Policy Fix)
+- Set the center play column and its key child panels to height-fixed sizing so later rounds cannot inherit the taller auction layout.
+- Constrained the hand scroll and action button area to fixed vertical sizing, while keeping the center column width flexible.
+- This should prevent the next round from being pushed downward in fullscreen after an auction round.
+
+## 2026-04-06 - Prompt 31 (Fullscreen Layout Reflow)
+- Added an explicit top-level layout reflow after restoring the first-round UI so fullscreen mode recalculates the center and side panel positions immediately.
+- This avoids relying on a manual fullscreen toggle to make the next round render correctly.
+- The fix keeps the window size unchanged and only refreshes widget layout state.
+
+## 2026-04-06 - Prompt 30 (Fullscreen-Safe Round Layout Restore)
+- Removed the geometry resize from the round layout restore path so fullscreen and maximized windows stay in their current size.
+- The game now only restores widget visibility and spacing between rounds, which should keep fullscreen mode active while preserving the first-round UI positions.
+- Also removed the forced resize on new game and after auction so the window state remains unchanged.
+
+## 2026-04-06 - Prompt 29 (Restore First-Round Layout Snapshot)
+- Replaced the ad hoc auction reset behavior with a first-round layout snapshot that is captured during normal play and restored after auction.
+- Stopped forcing the hidden auction board to zero height, which was leaving the later rounds visually stretched.
+- This should make the later rounds reuse the same layout state and widget spacing as the first round.
+
+## 2026-04-06 - Prompt 28 (End-of-Refresh Layout Restore)
+- Moved the normal-layout restore to the end of the UI refresh cycle so it runs after all auction-to-play widget updates settle.
+- This is meant to prevent the next round from re-expanding the screen after the auction board is hidden.
+- Keeps the center, side panels, and bottom buttons aligned the same way they are in the first round.
+
+## 2026-04-06 - Prompt 27 (Auction Collapse on Round Transition)
+- Fixed the auction board so it fully collapses when auction ends instead of leaving behind extra vertical space.
+- Deferred restoring the normal window size until the layout settles, which keeps the next round's play screen from shifting downward.
+- This should keep the card/play section and buttons in their normal position after auction transitions.
+
+## 2026-04-06 - Prompt 26 (Auction Window Size Reset)
+- Fixed the auction-to-play transition so the game window is resized back to the normal play layout after auction growth.
+- Also restore the normal window size when starting a new game from auction so New Game and Play Hand stay accessible on-screen.
+- This addresses the visible downward shift caused by the auction board enlarging the overall window.
+
+## 2026-04-06 - Prompt 25 (New Game Momentum Reset)
+- Fixed the New Game path so player and AI momentum reset to 0 visibly and in game state.
+- Also reset round score, discard counters, decks, jokers, planets, auction state, and round tracking on a fresh game.
+- This keeps the UI attached to the same player objects while still restoring a true clean start.
+
+## 2026-04-06 - Prompt 24 (New Game Auction UI Reset)
+- Fixed the new-game path so starting over from auction restores the normal play layout instead of leaving auction UI state behind.
+- Added an explicit UI reset when New Game is pressed:
+  - Stops any pending AI timer action
+  - Hides and clears the auction board
+  - Restores the normal title/header sizing
+  - Forces the played-hands area back into its normal visible state
+- Logged this change immediately as requested.
+
 ## 2026-04-04 - Prompt 1 (Auction Phase + Momentum)
 - Implemented full auction flow in game state with 5 revealed cards auctioned one-by-one.
 - Enforced 4-turn bidding order per card: Winner -> Loser -> Winner -> Loser.

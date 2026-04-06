@@ -49,12 +49,36 @@ class GameState:
 
     def new_game(self):
         """Initialize a new game."""
+        # Reset persistent player state while keeping the same objects referenced by the UI.
+        self.player.deck = []
+        self.player.hand = []
+        self.player.discard_actions_used = 0
+        self.player.discard_actions_max = 2
+        self.player.jokers = []
+        self.player.planets = []
+        self.player.round_score = 0
+        self.player.momentum = 0
+
+        self.ai.deck = []
+        self.ai.hand = []
+        self.ai.discard_actions_used = 0
+        self.ai.discard_actions_max = 2
+        self.ai.jokers = []
+        self.ai.planets = []
+        self.ai.round_score = 0
+        self.ai.momentum = 0
+
         # Create decks
         self.player.deck = self._create_deck()
         self.ai.deck = self._create_deck()
 
         # Initialize auctions deck
         self._init_auction_deck()
+
+        self.auction_state = AuctionState()
+        self.round_winner = None
+        self.last_auction_first_bidder = 0
+        self.round_disabled_jokers = {0: [], 1: []}
 
         self.current_round = 1
         self.current_set = 1

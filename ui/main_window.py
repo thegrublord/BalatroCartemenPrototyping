@@ -1,11 +1,11 @@
 """Main game window."""
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QPushButton, QLabel, QGridLayout, QMessageBox, QScrollArea,
     QSpinBox, QInputDialog, QDialog, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSize
 from PySide6.QtGui import QFont, QColor, QIcon, QPixmap
 from typing import List, Optional
 from pathlib import Path
@@ -64,6 +64,7 @@ class GameWindow(QMainWindow):
 
         # Center status widgets
         self.title_label: Optional[QLabel] = None
+        self.center_status_frame: Optional[QFrame] = None
         self.round_set_label: Optional[QLabel] = None
         self.player_points_value: Optional[QLabel] = None
         self.ai_points_value: Optional[QLabel] = None
@@ -81,6 +82,10 @@ class GameWindow(QMainWindow):
         # AI action timer
         self.ai_timer = QTimer()
         self.ai_timer.timeout.connect(self._perform_ai_action)
+
+        self.default_window_size = QSize(1600, 900)
+        self._first_round_layout_snapshot = None
+        self._first_round_layout_captured = False
 
         # Setup UI
         self._setup_ui()
@@ -103,7 +108,7 @@ class GameWindow(QMainWindow):
 
         # Center area
         center_widget = self._create_center_area()
-        main_layout.addWidget(center_widget, 1)
+        main_layout.addWidget(center_widget, 1, Qt.AlignTop)
 
         # Right sidebar
         right_panel = self._create_right_panel()
@@ -177,8 +182,6 @@ class GameWindow(QMainWindow):
         """)
         layout.addWidget(preview_frame)
 
-        layout.addStretch()
-
         # New Game button
         new_game_btn = QPushButton("NEW GAME")
         new_game_btn.setStyleSheet("""
@@ -196,6 +199,9 @@ class GameWindow(QMainWindow):
         new_game_btn.clicked.connect(self.start_new_game)
         layout.addWidget(new_game_btn)
 
+        # Keep spare vertical room below controls so NEW GAME stays anchored near gameplay info.
+        layout.addStretch()
+
         panel.setStyleSheet("""
             QFrame {
                 background-color: #0f1419;
@@ -209,6 +215,8 @@ class GameWindow(QMainWindow):
     def _create_center_area(self) -> QWidget:
         """Create center game area."""
         center_frame = QFrame()
+        self.center_frame = center_frame
+        center_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         layout = QVBoxLayout(center_frame)
 
         # Game title
@@ -221,6 +229,7 @@ class GameWindow(QMainWindow):
 
         # Round and score header
         status_frame = QFrame()
+        self.center_status_frame = status_frame
         status_layout = QVBoxLayout(status_frame)
 
         self.round_set_label = QLabel("Round 1, Set 1")
@@ -326,6 +335,7 @@ class GameWindow(QMainWindow):
                 padding: 10px;
             }
         """)
+        self.played_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.played_frame)
 
         # Auction board (shown during auction; replaces played-hands block)
@@ -335,18 +345,18 @@ class GameWindow(QMainWindow):
         auction_board_layout.setSpacing(4)
         auction_board_title = QLabel("AUCTION BOARD")
         auction_board_title.setStyleSheet(
-            "color: #c9a66b; font-weight: bold; font-size: 10px; "
-            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 4px; padding: 1px 4px;"
+            "color: #c9a66b; font-weight: bold; font-size: 12px; "
+            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 6px; padding: 4px 8px;"
         )
         auction_board_layout.addWidget(auction_board_title)
 
         self.auction_turn_info_label = QLabel("Waiting for auction")
         self.auction_turn_info_label.setStyleSheet(
-            "color: #d6deeb; font-size: 10px; "
-            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 4px; padding: 1px 4px;"
+            "color: #d6deeb; font-size: 11px; "
+            "background-color: #11182d; border: 1px solid #2a3d66; border-radius: 6px; padding: 4px 8px;"
         )
         self.auction_turn_info_label.setWordWrap(True)
-        self.auction_turn_info_label.setFixedHeight(26)
+        self.auction_turn_info_label.setFixedHeight(42)
         auction_board_layout.addWidget(self.auction_turn_info_label)
 
         self.auction_cards_container = QWidget()
@@ -360,10 +370,10 @@ class GameWindow(QMainWindow):
 
         self.auction_end_turn_btn = QPushButton("END BIDDING TURN")
         self.auction_end_turn_btn.setStyleSheet(
-            "QPushButton { background-color: #2d6a4f; color: #e9f5ee; font-weight: bold; padding: 4px; }"
+            "QPushButton { background-color: #2d6a4f; color: #e9f5ee; font-weight: bold; padding: 6px; }"
             "QPushButton:hover { background-color: #3a8a67; }"
         )
-        self.auction_end_turn_btn.setFixedHeight(28)
+        self.auction_end_turn_btn.setFixedHeight(34)
         self.auction_end_turn_btn.clicked.connect(self._handle_auction_end_turn)
         auction_board_layout.addWidget(self.auction_end_turn_btn)
 
@@ -376,7 +386,7 @@ class GameWindow(QMainWindow):
             }
         """)
         self.auction_board_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.auction_board_frame.setMaximumHeight(420)
+        self.auction_board_frame.setMaximumHeight(720)
         self.auction_board_frame.setVisible(False)
         layout.addWidget(self.auction_board_frame)
 
@@ -401,6 +411,7 @@ class GameWindow(QMainWindow):
                 border-radius: 5px;
             }
         """)
+        self.hand_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.hand_scroll.setMinimumHeight(180)
 
         self.hand_container = QWidget()
@@ -412,6 +423,7 @@ class GameWindow(QMainWindow):
 
         # Action buttons
         self.hand_buttons_widget = QWidget()
+        self.hand_buttons_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         button_layout = QHBoxLayout(self.hand_buttons_widget)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -530,7 +542,10 @@ class GameWindow(QMainWindow):
 
         # Action log
         self.action_log = ActionLogPanel()
-        layout.addWidget(self.action_log, 1)
+        layout.addWidget(self.action_log)
+
+        # Keep extra space below both sections instead of stretching the gap between them.
+        layout.addStretch()
 
         panel.setStyleSheet("""
             QFrame {
@@ -567,14 +582,140 @@ class GameWindow(QMainWindow):
 
     def start_new_game(self):
         """Start a new game."""
+        self.ai_timer.stop()
         self.game_state.new_game()
         self.selected_cards = []
         self.selected_card_widgets = []
         self.player_played_cards = None
         self.ai_played_cards = None
+        self._reset_auction_ui_state()
         self.game_state.start_set()
         self._update_display()
         self.action_log.add_log_entry("New game started! Set 1 of 3")
+
+    def _reset_auction_ui_state(self):
+        """Restore the normal play layout after leaving auction or starting over."""
+        self.auction_board_frame.setVisible(False)
+        self.auction_board_frame.setMaximumHeight(16777215)
+        self.played_frame.setVisible(True)
+
+        while self.auction_board_grid.count():
+            item = self.auction_board_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if self.center_status_frame is not None:
+            self.center_status_frame.setVisible(True)
+
+        if self.title_label is not None:
+            self.title_label.setFont(QFont("Bahnschrift", 20, QFont.Bold))
+            self.title_label.setFixedHeight(44)
+
+        if self.round_set_label is not None:
+            self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 18px; font-weight: bold;")
+
+    def _restore_normal_window_size(self):
+        """Bring the window back to its normal play size after auction-driven growth."""
+        if self.windowState() & Qt.WindowMaximized:
+            return
+        self.resize(self.default_window_size)
+
+    def _capture_first_round_layout_snapshot(self):
+        """Capture the first playable layout state so it can be reused after auction rounds."""
+        if self._first_round_layout_captured:
+            return
+
+        self._first_round_layout_snapshot = {
+            "geometry": self.geometry(),
+            "title_font": QFont(self.title_label.font()) if self.title_label is not None else None,
+            "title_height": self.title_label.height() if self.title_label is not None else None,
+            "center_status_visible": self.center_status_frame.isVisible() if self.center_status_frame is not None else True,
+            "round_style": self.round_set_label.styleSheet() if self.round_set_label is not None else "",
+            "played_visible": self.played_frame.isVisible() if self.played_frame is not None else True,
+            "auction_board_visible": self.auction_board_frame.isVisible() if self.auction_board_frame is not None else False,
+            "auction_board_max_height": self.auction_board_frame.maximumHeight() if self.auction_board_frame is not None else 16777215,
+            "auction_cards_max_height": self.auction_cards_container.maximumHeight() if self.auction_cards_container is not None else 16777215,
+            "hand_section_visible": self.hand_section_label.isVisible() if self.hand_section_label is not None else True,
+            "hand_preview_visible": self.hand_preview_label.isVisible() if self.hand_preview_label is not None else True,
+            "hand_scroll_visible": self.hand_scroll.isVisible() if hasattr(self, "hand_scroll") and self.hand_scroll is not None else True,
+            "hand_buttons_visible": self.hand_buttons_widget.isVisible() if self.hand_buttons_widget is not None else True,
+            "hand_scroll_min_height": self.hand_scroll.minimumHeight() if hasattr(self, "hand_scroll") and self.hand_scroll is not None else 0,
+            "player_info_height": self.player_info.height() if hasattr(self, "player_info") and self.player_info is not None else None,
+            "ai_info_height": self.ai_info.height() if hasattr(self, "ai_info") and self.ai_info is not None else None,
+            "action_log_height": self.action_log.height() if hasattr(self, "action_log") and self.action_log is not None else None,
+        }
+        self._first_round_layout_captured = True
+
+    def _restore_first_round_layout_snapshot(self):
+        """Restore the first-round layout snapshot after leaving auction."""
+        snapshot = self._first_round_layout_snapshot
+        if not snapshot:
+            return
+
+        if self.title_label is not None and snapshot.get("title_font") is not None:
+            self.title_label.setFont(snapshot["title_font"])
+            if snapshot.get("title_height") is not None:
+                self.title_label.setFixedHeight(snapshot["title_height"])
+
+        if self.center_status_frame is not None:
+            self.center_status_frame.setVisible(snapshot.get("center_status_visible", True))
+        if self.round_set_label is not None:
+            self.round_set_label.setStyleSheet(snapshot.get("round_style", ""))
+        if self.played_frame is not None:
+            self.played_frame.setVisible(snapshot.get("played_visible", True))
+        if self.auction_board_frame is not None:
+            self.auction_board_frame.setVisible(snapshot.get("auction_board_visible", False))
+            self.auction_board_frame.setMaximumHeight(snapshot.get("auction_board_max_height", 16777215))
+        if self.auction_cards_container is not None:
+            self.auction_cards_container.setMaximumHeight(snapshot.get("auction_cards_max_height", 16777215))
+        if self.hand_section_label is not None:
+            self.hand_section_label.setVisible(snapshot.get("hand_section_visible", True))
+        if self.hand_preview_label is not None:
+            self.hand_preview_label.setVisible(snapshot.get("hand_preview_visible", True))
+        if hasattr(self, "hand_scroll") and self.hand_scroll is not None:
+            self.hand_scroll.setVisible(snapshot.get("hand_scroll_visible", True))
+            self.hand_scroll.setMinimumHeight(snapshot.get("hand_scroll_min_height", self.hand_scroll.minimumHeight()))
+        if self.hand_buttons_widget is not None:
+            self.hand_buttons_widget.setVisible(snapshot.get("hand_buttons_visible", True))
+
+        # Keep side panel sections consistent with the first play round.
+        player_info_height = snapshot.get("player_info_height")
+        if hasattr(self, "player_info") and self.player_info is not None and player_info_height:
+            self.player_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.player_info.setFixedHeight(player_info_height)
+
+        ai_info_height = snapshot.get("ai_info_height")
+        if hasattr(self, "ai_info") and self.ai_info is not None and ai_info_height:
+            self.ai_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.ai_info.setFixedHeight(ai_info_height)
+
+        action_log_height = snapshot.get("action_log_height")
+        if hasattr(self, "action_log") and self.action_log is not None and action_log_height:
+            self.action_log.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.action_log.setFixedHeight(action_log_height)
+
+        self._refresh_full_window_layout()
+
+        if self.center_frame is not None:
+            self.center_frame.updateGeometry()
+            self.center_frame.adjustSize()
+
+    def _refresh_full_window_layout(self):
+        """Reflow the window layout without changing its size or fullscreen state."""
+        widgets = [self, self.centralWidget()]
+        for widget in widgets:
+            if widget is None:
+                continue
+            widget.setUpdatesEnabled(False)
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            widget.updateGeometry()
+            widget.setUpdatesEnabled(True)
+            widget.update()
+
+        QApplication.processEvents()
 
     def _update_display(self):
         """Update all UI displays."""
@@ -624,6 +765,11 @@ class GameWindow(QMainWindow):
 
         # Update selected hand preview
         self._update_selected_hand_preview()
+
+        if self.game_state.current_phase == GamePhase.SET_PLAY:
+            self._capture_first_round_layout_snapshot()
+        elif self.game_state.current_phase != GamePhase.AUCTION:
+            self._restore_first_round_layout_snapshot()
 
     def _update_played_hands_display(self):
         """Update the display of played hands."""
@@ -705,15 +851,18 @@ class GameWindow(QMainWindow):
             self.hand_buttons_widget.setVisible(show_hand_section)
 
     def _update_center_header_layout(self):
-        """Compact top header during auction to free vertical space for cards."""
+        """Adjust center header visibility and sizing by phase."""
         if self.title_label is None or self.round_set_label is None:
             return
 
         in_auction = self.game_state.current_phase == GamePhase.AUCTION
+        if self.center_status_frame is not None:
+            self.center_status_frame.setVisible(not in_auction)
+
         if in_auction:
-            self.title_label.setFont(QFont("Bahnschrift", 14, QFont.Bold))
-            self.title_label.setFixedHeight(28)
-            self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 14px; font-weight: bold;")
+            self.title_label.setFont(QFont("Bahnschrift", 18, QFont.Bold))
+            self.title_label.setFixedHeight(48)
+            self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 18px; font-weight: bold;")
         else:
             self.title_label.setFont(QFont("Bahnschrift", 20, QFont.Bold))
             self.title_label.setFixedHeight(44)
@@ -862,7 +1011,13 @@ class GameWindow(QMainWindow):
         self.auction_board_frame.setVisible(in_auction)
         self.played_frame.setVisible(not in_auction)
         # Keep auction board compact only during auction, while normal set-play uses full center space.
-        self.auction_board_frame.setMaximumHeight(420 if in_auction else 16777215)
+        if in_auction:
+            self.auction_board_frame.setMaximumHeight(860)
+            self.auction_cards_container.setMaximumHeight(16777215)
+        else:
+            self.auction_board_frame.setMaximumHeight(16777215)
+            self.auction_cards_container.setMaximumHeight(16777215)
+            QTimer.singleShot(0, self._restore_first_round_layout_snapshot)
 
         if not in_auction:
             return
@@ -884,39 +1039,45 @@ class GameWindow(QMainWindow):
         for idx, card in enumerate(self.game_state.auction_state.revealed_cards):
             frame = QFrame()
             frame.setStyleSheet("background-color: #121c33; border: 1px solid #2a3d66; border-radius: 8px;")
+            frame.setMinimumHeight(240)
             outer = QHBoxLayout(frame)
-            outer.setContentsMargins(6, 6, 6, 6)
-            outer.setSpacing(8)
+            outer.setContentsMargins(12, 12, 12, 12)
+            outer.setSpacing(14)
 
             image = QLabel("Image Missing")
             image.setAlignment(Qt.AlignCenter)
-            image.setFixedSize(96, 96)
+            image.setFixedSize(136, 136)
             image.setStyleSheet("background-color: #0c1223; border: 1px solid #2f3c7e; border-radius: 6px;")
             image_path = self._get_auction_card_image_path(card)
             if image_path and image_path.exists():
                 pixmap = QPixmap(str(image_path))
                 if not pixmap.isNull():
-                    image.setPixmap(pixmap.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    image.setPixmap(pixmap.scaled(132, 132, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                     image.setText("")
             outer.addWidget(image)
 
             details = QWidget()
+            details.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
             details_layout = QVBoxLayout(details)
             details_layout.setContentsMargins(0, 0, 0, 0)
-            details_layout.setSpacing(4)
+            details_layout.setSpacing(10)
 
             name = QLabel(str(card))
             name.setWordWrap(True)
-            name.setStyleSheet("color: #c9a66b; font-weight: bold; font-size: 11px;")
+            name.setAlignment(Qt.AlignCenter)
+            name.setStyleSheet("color: #c9a66b; font-weight: bold; font-size: 13px;")
             details_layout.addWidget(name)
 
             desc = QLabel(self._get_auction_card_description(card))
             desc.setWordWrap(True)
+            desc.setAlignment(Qt.AlignCenter)
             desc.setStyleSheet(
-                "color: #c8d3e6; font-size: 10px; "
-                "background-color: #172443; border: 1px solid #2d4270; border-radius: 6px; padding: 4px;"
+                "color: #c8d3e6; font-size: 11px; "
+                "background-color: #172443; border: 1px solid #2d4270; border-radius: 8px; padding: 6px;"
             )
-            details_layout.addWidget(desc)
+            desc.setMinimumHeight(112)
+            desc.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            details_layout.addWidget(desc, 1)
 
             current_bid = self.game_state.auction_state.card_bids[idx]
             leader = self.game_state.auction_state.card_leaders[idx]
@@ -926,11 +1087,14 @@ class GameWindow(QMainWindow):
                 f"Min: {card.minimum_bid} | Bid: {current_bid}\nLeader: {leader_text} | Next: {min_next}"
             )
             info.setWordWrap(True)
+            info.setAlignment(Qt.AlignCenter)
             info.setStyleSheet(
-                "color: #9fd8ff; font-size: 10px; "
-                "background-color: #172443; border: 1px solid #2d4270; border-radius: 6px; padding: 4px;"
+                "color: #9fd8ff; font-size: 11px; "
+                "background-color: #172443; border: 1px solid #2d4270; border-radius: 8px; padding: 6px;"
             )
-            details_layout.addWidget(info)
+            info.setMinimumHeight(76)
+            info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            details_layout.addWidget(info, 1)
 
             button_row = QHBoxLayout()
             button_row.setSpacing(4)
@@ -938,17 +1102,17 @@ class GameWindow(QMainWindow):
             bid_btn = QPushButton("Bid +Min")
             bid_btn.setEnabled(next_bidder == 0)
             bid_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_bid(card_idx))
-            bid_btn.setStyleSheet("padding: 4px; font-size: 10px;")
-            bid_btn.setFixedHeight(24)
+            bid_btn.setStyleSheet("padding: 6px; font-size: 11px;")
+            bid_btn.setFixedHeight(34)
             button_row.addWidget(bid_btn)
 
             reduce_btn = QPushButton("Bid -Min")
             reduce_btn.setEnabled(next_bidder == 0)
             reduce_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_reduce(card_idx))
             reduce_btn.setStyleSheet(
-                "padding: 4px; font-size: 10px; background-color: #40312a; border: 1px solid #6f5346;"
+                "padding: 6px; font-size: 11px; background-color: #40312a; border: 1px solid #6f5346;"
             )
-            reduce_btn.setFixedHeight(24)
+            reduce_btn.setFixedHeight(34)
             button_row.addWidget(reduce_btn)
 
             details_layout.addLayout(button_row)
