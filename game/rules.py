@@ -114,19 +114,21 @@ class PokerHandEvaluator:
         if disabled_jokers is None:
             disabled_jokers = []
 
-        active_jokers = [j for j in player.jokers if j not in disabled_jokers]
+        effective_joker_types = PokerHandEvaluator._resolve_effective_joker_types(player, disabled_jokers)
+        has_uniform = JokerType.UNIFORM in effective_joker_types
+        has_smear = JokerType.SMEAR in effective_joker_types
 
         # Sort by rank for easier evaluation
         sorted_cards = sorted(cards, key=lambda c: c.rank.rank_order(), reverse=True)
 
         # Check for flush with suit-normalization jokers
         normalized_suits = [
-            PokerHandEvaluator._normalize_suit(c.suit, active_jokers) for c in sorted_cards
+            PokerHandEvaluator._normalize_suit_with_effects(c.suit, has_uniform, has_smear) for c in sorted_cards
         ]
         suit_counts = Counter(normalized_suits)
         is_flush = len(suit_counts) == 1
 
-        has_four_fingers = any(j.type == JokerType.FOUR_FINGERS for j in active_jokers)
+        has_four_fingers = JokerType.FOUR_FINGERS in effective_joker_types
         if not is_flush and has_four_fingers and suit_counts:
             is_flush = max(suit_counts.values()) >= 4
 
@@ -134,7 +136,7 @@ class PokerHandEvaluator:
         ranks = sorted([c.rank.rank_order() for c in sorted_cards], reverse=True)
         is_straight = PokerHandEvaluator._is_straight(ranks)
 
-        has_shortcut = any(j.type == JokerType.SHORTCUT for j in active_jokers)
+        has_shortcut = JokerType.SHORTCUT in effective_joker_types
         if not is_straight and has_shortcut:
             is_straight = PokerHandEvaluator._is_shortcut_straight(ranks)
 
@@ -183,12 +185,57 @@ class PokerHandEvaluator:
         has_uniform = any(j.type == JokerType.UNIFORM for j in active_jokers)
         has_smear = any(j.type == JokerType.SMEAR for j in active_jokers)
 
+        return PokerHandEvaluator._normalize_suit_with_effects(suit, has_uniform, has_smear)
+
+    @staticmethod
+    def _normalize_suit_with_effects(suit: Suit, has_uniform: bool, has_smear: bool) -> Suit:
+        """Normalize suit using pre-resolved effect flags."""
+
         normalized = suit
         if has_uniform and normalized in (Suit.SPADES, Suit.CLUBS):
             normalized = Suit.CLUBS
         if has_smear and normalized in (Suit.HEARTS, Suit.DIAMONDS):
             normalized = Suit.HEARTS
         return normalized
+
+    @staticmethod
+    def _resolve_effective_joker_types(player: Player, disabled_jokers: List[Joker]) -> List[JokerType]:
+        """Resolve effective joker types in player order, including COPYCAT right-neighbor copying."""
+        disabled_list = disabled_jokers or []
+        ordered = player.jokers
+        cache = {}
+
+        def resolve_index(index: int, visiting: set) -> JokerType:
+            if index in cache:
+                return cache[index]
+            if index < 0 or index >= len(ordered):
+                return None
+
+            joker = ordered[index]
+            if joker in disabled_list:
+                cache[index] = None
+                return None
+
+            if index in visiting:
+                return None
+
+            if joker.type != JokerType.COPYCAT:
+                cache[index] = joker.type
+                return cache[index]
+
+            copied = resolve_index(index + 1, visiting | {index})
+            cache[index] = copied
+            return copied
+
+        resolved: List[JokerType] = []
+        for idx, joker in enumerate(ordered):
+            if joker in disabled_list:
+                continue
+            effective = resolve_index(idx, set())
+            if effective is not None:
+                resolved.append(effective)
+
+        return resolved
 
     @staticmethod
     def find_best_hand(cards: List[Card]) -> PokerHand:
@@ -243,6 +290,7 @@ class ScoringRules:
         hand: PokerHand,
         player: Player,
         opponent: Player = None,
+        opponent_hand_cards: List[Card] = None,
         disabled_jokers: List[Joker] = None,
         opponent_disabled_jokers: List[Joker] = None,
     ) -> ScoreResult:
@@ -269,11 +317,11 @@ class ScoringRules:
             card_chips += c.chip_value()
 
         # planets modify hand type scores
-        planet_name = hand.hand_rank.value[0]
         planet_chips = 0
         planet_mult = 0
+        hand_type_name = hand.hand_rank.name.replace("_", " ").lower()
         for planet_enum in Planet:
-            if planet_enum.hand_type() == hand.hand_rank.name.replace("_", " "):
+            if planet_enum.hand_type().lower() == hand_type_name:
                 level = player.planet_level(planet_enum)
                 planet_chips += level * planet_enum.chip_bonus()
                 planet_mult += level * planet_enum.mult_bonus()
@@ -283,13 +331,14 @@ class ScoringRules:
         joker_mult_bonus = 0
         joker_x_mult = 1.0
 
-        available_jokers = [j for j in player.jokers if j not in disabled_jokers]
+        available_joker_types = PokerHandEvaluator._resolve_effective_joker_types(player, disabled_jokers)
+        has_uniform = JokerType.UNIFORM in available_joker_types
+        has_smear = JokerType.SMEAR in available_joker_types
 
         def normalize_suit_for_player(suit: Suit) -> Suit:
-            return PokerHandEvaluator._normalize_suit(suit, available_jokers)
+            return PokerHandEvaluator._normalize_suit_with_effects(suit, has_uniform, has_smear)
 
-        for joker in available_jokers:
-            jtype = joker.type
+        for jtype in available_joker_types:
 
             # Common jokers
             if jtype == JokerType.BANNER:
@@ -328,8 +377,11 @@ class ScoringRules:
 
             # Rare jokers
             elif jtype == JokerType.TAX_MAN and opponent:
-                # Need to track opponent's played hand - simplify for now
-                pass
+                if opponent_hand_cards:
+                    opponent_face_cards = sum(
+                        1 for c in opponent_hand_cards if c.rank in (Rank.JACK, Rank.QUEEN, Rank.KING)
+                    )
+                    joker_chip_bonus += 10 * opponent_face_cards
 
             elif jtype == JokerType.THE_TRIBE:
                 if hand.hand_rank == HandRank.FLUSH:

@@ -1,5 +1,127 @@
 # Change Log
 
+## 2026-04-06 - Prompt 53 (Copycat + Joker Reordering)
+- Implemented Copycat in live rules: it now copies the effect of the joker immediately to its right in the player's joker order.
+- Added ordered joker collection UI with UP/DOWN controls to reorder jokers.
+- Reordering is blocked for AI collections.
+- In local 2-player mode, reordering is allowed only for the active player's turn.
+- Updated Copycat descriptions to match this behavior.
+
+## 2026-04-06 - Prompt 52 (Manual COPYRIGHT Choice)
+- Implemented manual target selection for COPYRIGHT instead of always auto-picking.
+- When tied hand ranks trigger COPYRIGHT, the human now chooses which opponent joker to disable for the round.
+- In local 2-player mode, both sides can make a manual choice when they each have active COPYRIGHT.
+- Kept automatic fallback selection in game state when no manual target is supplied.
+
+## 2026-04-06 - Prompt 51 (Joker Overflow Freeze Fix)
+- Fixed a freeze after discarding a joker at overflow.
+- After the human selects a joker to discard, auction settlement now resumes immediately.
+- This allows the game to advance into the next round instead of remaining stuck in auction state.
+
+## 2026-04-06 - Prompt 50 (Auction Cycle Advance)
+- Updated auction cycling to always advance the market after each auction.
+- All revealed unsold cards are now moved to the back of the auction deck.
+- Won cards are still removed from supply, so the next auction always shows a fresh front cycle.
+
+## 2026-04-06 - Prompt 49 (Unsold Auction Requeue + Reshuffle)
+- Changed auction flow so unsold revealed cards are guaranteed to appear in the next auction.
+- After each auction, unsold cards are moved to the front of the auction deck.
+- The rest of the remaining deck is reshuffled behind those guaranteed cards.
+- This prevents stale repeated auction fronts while preserving deterministic next-auction carryover for unsold cards.
+
+## 2026-04-06 - Prompt 48 (Tax Man Implementation)
+- Implemented live Tax Man scoring: +10 chips for each face card (J/Q/K) in the opponent's played hand.
+- Added opponent played-hand context to score calculations where both hands are known.
+- Updated set scoring and played-hand UI summaries to use the new Tax Man behavior.
+
+## 2026-04-06 - Prompt 47 (Trade Insider Next-Auction Peek)
+- Implemented live Trade Insider behavior in the left status column.
+- When a player owns Trade Insider, status now shows up to two jokers that will appear in the next auction reveal.
+- If fewer than two jokers are in that reveal, it shows one joker or "No joker".
+- Applied the same behavior for local 2-player mode (separate P1/P2 lines when they own Trade Insider).
+
+## 2026-04-06 - Prompt 46 (Joker Description Cleanup)
+- Updated the live Family joker description to match the current scoring rule wording more closely.
+- Marked Copycat as unimplemented in the live UI instead of implying it already copies another joker.
+- Left the actual scoring logic unchanged for implemented jokers.
+
+## 2026-04-06 - Prompt 45 (JokerType Alias Fix)
+- Fixed the live JokerType enum so each joker now has a unique identity instead of collapsing into shared rarity aliases.
+- Restored the full live auction roster to 24 distinct jokers and 45 planets.
+- This prevents the auction from degenerating into only BANNER / SCRAPPY / FAMILY and makes all joker effects distinguishable again.
+
+## 2026-04-06 - Prompt 44 (Auction Supply + Planet Scoring Fix)
+- Fixed the live auction so revealed cards are not consumed from the supply unless they are actually won.
+- Auction cards now remain eligible to reappear in later auctions if they were only revealed and not purchased.
+- Fixed planet scoring so hand-type matching is case-insensitive and planet chip/multiplier bonuses now apply correctly.
+
+## 2026-04-06 - Prompt 43 (Live Auction Copy Counts)
+- Updated the live game auction deck to match the requested copy counts from the balance table.
+- Planet copies are now set to 5 each.
+- Joker copies are now distributed as:
+  - 3 copies: Banner, Abstract, Even Steven, Odd Todd, Black Hole, The Duo
+  - 2 copies: The Greedy, The Lover, The Protector, The Chairman, Scrappy, Straitjacket, Copyright, Tax Man, Trade Insider, Four Fingers, Shortcut, The Tribe, The Order
+  - 1 copy: Family, Rainbow, Uniform, Smear, Copycat
+
+## 2026-04-06 - Prompt 42 (PNG Image Support)
+- Updated card image loaders to accept multiple file formats automatically.
+- Supported extensions now include:
+  - PNG
+  - WEBP
+  - JPG
+  - JPEG
+- This applies to auction card art, joker art, and planet art.
+
+## 2026-04-06 - Prompt 41 (Deterministic 2P Hand Section Order)
+- Replaced partial hand-widget swapping logic with explicit ordered insertion of all hand-section widgets.
+- In 2-player mode, the visible order is now exactly:
+  1) Preview strip
+  2) PLAYER 1 HAND label
+  3) Player 1 cards
+  4) PLAYER 2 HAND label
+  5) Player 2 cards
+  6) Player turn banner
+  7) Action buttons
+- Single-player order remains compact and unchanged for normal AI games.
+
+## 2026-04-06 - Prompt 40 (Player 1 Hand Label + 2P Order Swap)
+- Renamed the top hand section label from "YOUR HAND" to "PLAYER 1 HAND".
+- Added two-player-specific ordering for the top hand area:
+  - "Select cards to preview projected hand value" now appears above "PLAYER 1 HAND".
+- Kept single-player ordering unchanged for readability.
+
+## 2026-04-06 - Prompt 39 (Played Hands Compact + 2P Labels)
+- Slightly condensed the Played Hands block (reduced padding/height) to free additional space for score numbers.
+- Updated Played Hands text labels to be mode-aware:
+  - AI mode: Player / AI
+  - 2-player mode: Player 1 / Player 2
+- Updated waiting text in Played Hands to say Waiting for Player 2 in two-player mode.
+
+## 2026-04-06 - Prompt 38 (Score Card Readability Rebalance)
+- Loosened the center score card compression to improve readability.
+- Removed strict max-height caps from the status/points frames and restored moderate padding and spacing.
+- Keeps the compact direction from earlier changes while making score text easier to read.
+
+## 2026-04-06 - Prompt 37 (2-Player Labels + Compact Preview/Score)
+- Updated side panel player names to refresh dynamically from player state, so local 2-player mode shows Player 1 and Player 2 in the Human/AI info sections.
+- Converted hand selection preview text into a single horizontal line to avoid pushing buttons downward during two-player card selection.
+- Added tooltip mirroring for the compact preview text.
+- Condensed center score card/panel padding and max heights so it fits text without excess blank space.
+
+## 2026-04-06 - Prompt 36 (AI vs 2-Player Mode Selection)
+- Added a game mode prompt at startup and on NEW GAME:
+  - Play vs AI
+  - 2-Player (Local)
+- Added two-player set-play flow:
+  - Player 1 hand remains in the original hand position.
+  - Player 2 hand is displayed below Player 1.
+  - Turn indicator shows whose hand is active.
+  - Play/Discard buttons apply to the active human player.
+  - Set scoring resolves after both players play.
+- Added mode-aware auction interaction:
+  - In 2-player mode, both bidder turns are controlled manually and sequentially.
+  - In AI mode, existing AI auction turn behavior remains.
+
 ## 2026-04-06 - Prompt 35 (Panel Spacer Placement Fix)
 - Repositioned left panel stretch spacer to below the NEW GAME button so the button no longer gets pushed downward by extra column space.
 - Updated right panel layout to remove stretch weighting from Action Log and place a bottom spacer after both sections.

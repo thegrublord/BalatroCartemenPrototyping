@@ -101,10 +101,10 @@ class PlayerInfoPanel(QFrame):
         layout.setContentsMargins(10, 10, 10, 10)
         
         # Title
-        title = QLabel(player.name)
-        title.setFont(QFont("Bahnschrift", 12, QFont.Bold))
-        title.setStyleSheet("color: #c9a66b;")
-        layout.addWidget(title)
+        self.title_label = QLabel(player.name)
+        self.title_label.setFont(QFont("Bahnschrift", 12, QFont.Bold))
+        self.title_label.setStyleSheet("color: #c9a66b;")
+        layout.addWidget(self.title_label)
         
         # Round score
         self.round_score_label = QLabel("Round: 0")
@@ -172,6 +172,7 @@ class PlayerInfoPanel(QFrame):
         
     def update_display(self):
         """Update all information displays."""
+        self.title_label.setText(self.player.name)
         self.round_score_label.setText(f"Round: {self.player.round_score}")
         self.discard_label.setText(
             f"Discards: {self.player.discard_actions_used}/{self.player.discard_actions_max}"

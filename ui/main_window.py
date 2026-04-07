@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSize
 from PySide6.QtGui import QFont, QColor, QIcon, QPixmap
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pathlib import Path
 from collections import Counter
 
@@ -38,12 +38,22 @@ class GameWindow(QMainWindow):
         # Selected cards for playing hand
         self.selected_cards: List[Card] = []
         self.selected_card_widgets: List[CardWidget] = []
+        self.game_mode = "ai"
+        self.active_human_player_index = 0
+        self.selected_cards_by_player: Dict[int, List[Card]] = {0: [], 1: []}
+        self.selected_widgets_by_player: Dict[int, List[CardWidget]] = {0: [], 1: []}
+        self.hand_widgets_by_player: Dict[int, List[CardWidget]] = {0: [], 1: []}
 
         # Current card widgets
         self.hand_widgets: List[CardWidget] = []
         self.hand_section_label: Optional[QLabel] = None
+        self.hand_section_label_p2: Optional[QLabel] = None
         self.hand_buttons_widget: Optional[QWidget] = None
+        self.hand_turn_label: Optional[QLabel] = None
         self.hand_preview_label: Optional[QLabel] = None
+        self.hand_scroll_p2: Optional[QScrollArea] = None
+        self.hand_grid_p2: Optional[QGridLayout] = None
+        self.hand_container_p2: Optional[QWidget] = None
         self.played_frame: Optional[QFrame] = None
         self.auction_board_frame: Optional[QFrame] = None
         self.auction_board_grid: Optional[QGridLayout] = None
@@ -63,6 +73,7 @@ class GameWindow(QMainWindow):
         self.auction_frame: Optional[QFrame] = None
 
         # Center status widgets
+        self.center_layout: Optional[QVBoxLayout] = None
         self.title_label: Optional[QLabel] = None
         self.center_status_frame: Optional[QFrame] = None
         self.round_set_label: Optional[QLabel] = None
@@ -218,6 +229,7 @@ class GameWindow(QMainWindow):
         self.center_frame = center_frame
         center_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         layout = QVBoxLayout(center_frame)
+        self.center_layout = layout
 
         # Game title
         self.title_label = QLabel("BALATRO CERTAMEN")
@@ -231,6 +243,8 @@ class GameWindow(QMainWindow):
         status_frame = QFrame()
         self.center_status_frame = status_frame
         status_layout = QVBoxLayout(status_frame)
+        status_layout.setContentsMargins(8, 8, 8, 8)
+        status_layout.setSpacing(6)
 
         self.round_set_label = QLabel("Round 1, Set 1")
         self.round_set_label.setAlignment(Qt.AlignCenter)
@@ -238,6 +252,8 @@ class GameWindow(QMainWindow):
         status_layout.addWidget(self.round_set_label)
 
         points_row = QHBoxLayout()
+        points_row.setContentsMargins(0, 0, 0, 0)
+        points_row.setSpacing(8)
 
         player_points_frame = QFrame()
         player_points_layout = QVBoxLayout(player_points_frame)
@@ -291,26 +307,29 @@ class GameWindow(QMainWindow):
                 background-color: #15172b;
                 border: 1px solid #2f3c7e;
                 border-radius: 8px;
-                padding: 8px;
+                padding: 6px;
             }
         """)
+        status_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         player_points_frame.setStyleSheet("""
             QFrame {
                 background-color: rgba(100, 255, 150, 0.08);
                 border: 1px solid #2d7a55;
                 border-radius: 8px;
-                padding: 8px;
+                padding: 6px;
             }
         """)
+        player_points_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         ai_points_frame.setStyleSheet("""
             QFrame {
                 background-color: rgba(255, 120, 120, 0.10);
                 border: 1px solid #7b3434;
                 border-radius: 8px;
-                padding: 8px;
+                padding: 6px;
             }
         """)
+        ai_points_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         layout.addWidget(status_frame)
 
@@ -324,7 +343,7 @@ class GameWindow(QMainWindow):
         self.played_display = QLabel("Waiting for player action...")
         self.played_display.setStyleSheet("color: #cccccc;")
         self.played_display.setWordWrap(True)
-        self.played_display.setMinimumHeight(60)
+        self.played_display.setMinimumHeight(44)
         played_layout.addWidget(self.played_display)
 
         self.played_frame.setStyleSheet("""
@@ -332,9 +351,10 @@ class GameWindow(QMainWindow):
                 background-color: #1a1a2e;
                 border: 1px solid #0f3460;
                 border-radius: 5px;
-                padding: 10px;
+                padding: 6px;
             }
         """)
+        self.played_frame.setMaximumHeight(96)
         self.played_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.played_frame)
 
@@ -391,16 +411,18 @@ class GameWindow(QMainWindow):
         layout.addWidget(self.auction_board_frame)
 
         # Player's hand
-        self.hand_section_label = QLabel("YOUR HAND")
+        self.hand_section_label = QLabel("PLAYER 1 HAND")
         self.hand_section_label.setStyleSheet("color: #00d4ff; font-weight: bold; margin-top: 10px;")
         layout.addWidget(self.hand_section_label)
 
         self.hand_preview_label = QLabel("Select cards to preview projected hand value")
-        self.hand_preview_label.setWordWrap(True)
+        self.hand_preview_label.setWordWrap(False)
+        self.hand_preview_label.setFixedHeight(30)
         self.hand_preview_label.setStyleSheet(
             "color: #d6deeb; background-color: #121c33; border: 1px solid #2f3c7e; "
             "border-radius: 6px; padding: 6px;"
         )
+        self.hand_preview_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         layout.addWidget(self.hand_preview_label)
 
         self.hand_scroll = QScrollArea()
@@ -420,6 +442,38 @@ class GameWindow(QMainWindow):
         self.hand_scroll.setWidget(self.hand_container)
         self.hand_scroll.setWidgetResizable(True)
         layout.addWidget(self.hand_scroll)
+
+        self.hand_section_label_p2 = QLabel("PLAYER 2 HAND")
+        self.hand_section_label_p2.setStyleSheet("color: #ffb4b4; font-weight: bold;")
+        self.hand_section_label_p2.setVisible(False)
+        layout.addWidget(self.hand_section_label_p2)
+
+        self.hand_scroll_p2 = QScrollArea()
+        self.hand_scroll_p2.setStyleSheet("""
+            QScrollArea {
+                background-color: #1a1a2e;
+                border: 1px solid #5a2a2a;
+                border-radius: 5px;
+            }
+        """)
+        self.hand_scroll_p2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.hand_scroll_p2.setMinimumHeight(180)
+        self.hand_scroll_p2.setVisible(False)
+
+        self.hand_container_p2 = QWidget()
+        self.hand_grid_p2 = QGridLayout(self.hand_container_p2)
+        self.hand_grid_p2.setSpacing(5)
+        self.hand_scroll_p2.setWidget(self.hand_container_p2)
+        self.hand_scroll_p2.setWidgetResizable(True)
+        layout.addWidget(self.hand_scroll_p2)
+
+        self.hand_turn_label = QLabel("")
+        self.hand_turn_label.setStyleSheet(
+            "color: #ffe08a; background-color: #2a1f12; border: 1px solid #5c4324; "
+            "border-radius: 5px; padding: 4px 8px; font-weight: bold;"
+        )
+        self.hand_turn_label.setVisible(False)
+        layout.addWidget(self.hand_turn_label)
 
         # Action buttons
         self.hand_buttons_widget = QWidget()
@@ -582,16 +636,45 @@ class GameWindow(QMainWindow):
 
     def start_new_game(self):
         """Start a new game."""
+        if not self._prompt_game_mode():
+            return
+
         self.ai_timer.stop()
         self.game_state.new_game()
         self.selected_cards = []
         self.selected_card_widgets = []
+        self.selected_cards_by_player = {0: [], 1: []}
+        self.selected_widgets_by_player = {0: [], 1: []}
+        self.hand_widgets_by_player = {0: [], 1: []}
+        self.active_human_player_index = 0
         self.player_played_cards = None
         self.ai_played_cards = None
+
+        self.game_state.player.name = "Player 1" if self.game_mode == "two_player" else "Human"
+        self.game_state.ai.name = "Player 2" if self.game_mode == "two_player" else "AI"
+
         self._reset_auction_ui_state()
         self.game_state.start_set()
         self._update_display()
-        self.action_log.add_log_entry("New game started! Set 1 of 3")
+        mode_text = "2-Player" if self.game_mode == "two_player" else "Vs AI"
+        self.action_log.add_log_entry(f"New game started ({mode_text})! Set 1 of 3")
+
+    def _prompt_game_mode(self) -> bool:
+        """Prompt for game mode at startup and when NEW GAME is pressed."""
+        options = ["Play vs AI", "2-Player (Local)"]
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Select Mode",
+            "Choose game mode:",
+            options,
+            0,
+            False,
+        )
+        if not ok:
+            return False
+
+        self.game_mode = "two_player" if choice.startswith("2-Player") else "ai"
+        return True
 
     def _reset_auction_ui_state(self):
         """Restore the normal play layout after leaving auction or starting over."""
@@ -730,6 +813,22 @@ class GameWindow(QMainWindow):
             f"AI {self.game_state.ai.round_score:,}\n"
             f"Momentum: {self.game_state.player.momentum:+,}"
         )
+
+        upcoming_jokers = self.game_state.get_next_auction_jokers(limit=2)
+        if upcoming_jokers:
+            next_jokers_text = ", ".join(j.name.replace("_", " ").title() for j in upcoming_jokers)
+        else:
+            next_jokers_text = "No joker"
+
+        if self.game_mode == "two_player":
+            if self.game_state.player.has_joker_type(JokerType.TRADE_INSIDER):
+                status_text += f"\nTrade Insider P1: {next_jokers_text}"
+            if self.game_state.ai.has_joker_type(JokerType.TRADE_INSIDER):
+                status_text += f"\nTrade Insider P2: {next_jokers_text}"
+        else:
+            if self.game_state.player.has_joker_type(JokerType.TRADE_INSIDER):
+                status_text += f"\nTrade Insider: {next_jokers_text}"
+
         self.status_label.setText(status_text)
 
         self.round_set_label.setText(
@@ -789,6 +888,7 @@ class GameWindow(QMainWindow):
                 player_hand,
                 self.game_state.player,
                 self.game_state.ai,
+                opponent_hand_cards=ai_hand.cards,
                 disabled_jokers=self.game_state.round_disabled_jokers[0],
                 opponent_disabled_jokers=self.game_state.round_disabled_jokers[1],
             )
@@ -796,13 +896,17 @@ class GameWindow(QMainWindow):
                 ai_hand,
                 self.game_state.ai,
                 self.game_state.player,
+                opponent_hand_cards=player_hand.cards,
                 disabled_jokers=self.game_state.round_disabled_jokers[1],
                 opponent_disabled_jokers=self.game_state.round_disabled_jokers[0],
             )
+
+            p1_label = "Player 1" if self.game_mode == "two_player" else "Player"
+            p2_label = "Player 2" if self.game_mode == "two_player" else "AI"
             
             display_text = (
-                f"Player: {player_hand.hand_rank.name} = {player_score.final_score} pts\n"
-                f"AI: {ai_hand.hand_rank.name} = {ai_score.final_score} pts"
+                f"{p1_label}: {player_hand.hand_rank.name} = {player_score.final_score} pts\n"
+                f"{p2_label}: {ai_hand.hand_rank.name} = {ai_score.final_score} pts"
             )
             self.played_display.setText(display_text)
         elif self.player_played_cards:
@@ -811,34 +915,43 @@ class GameWindow(QMainWindow):
                 self.game_state.player,
                 self.game_state.round_disabled_jokers[0],
             )
-            self.played_display.setText(f"Player played: {player_hand.hand_rank.name}\nWaiting for AI...")
+            player_label = "Player 1" if self.game_mode == "two_player" else "Player"
+            waiting_label = "Player 2" if self.game_mode == "two_player" else "AI"
+            self.played_display.setText(
+                f"{player_label} played: {player_hand.hand_rank.name}\nWaiting for {waiting_label}..."
+            )
         else:
             self.played_display.setText("Waiting for player action...")
 
     def _update_hand_display(self):
-        """Update the player's hand display."""
-        # Clear old widgets
-        for widget in self.hand_widgets:
-            widget.deleteLater()
-        self.hand_widgets = []
-        self.selected_card_widgets = []
-        self.selected_cards = []
+        """Update the hand displays for AI or two-player modes."""
+        self._clear_grid(self.hand_grid)
+        if self.hand_grid_p2 is not None:
+            self._clear_grid(self.hand_grid_p2)
 
-        # Create new card widgets
+        self.hand_widgets_by_player = {0: [], 1: []}
+
         for i, card in enumerate(self.game_state.player.hand):
             card_widget = CardWidget(card)
-            card_widget.clicked.connect(self._on_card_clicked)
+            card_widget.clicked.connect(lambda widget, idx=0: self._on_card_clicked(idx, widget))
             self.hand_grid.addWidget(card_widget, 0, i)
-            self.hand_widgets.append(card_widget)
+            self.hand_widgets_by_player[0].append(card_widget)
 
-        # Update play button
-        is_set_play = self.game_state.current_phase == GamePhase.SET_PLAY
-        self.play_btn.setEnabled(is_set_play and len(self.selected_cards) == 5)
-        self.discard_btn.setEnabled(is_set_play and len(self.selected_cards) > 0)
+        if self.game_mode == "two_player" and self.hand_grid_p2 is not None:
+            for i, card in enumerate(self.game_state.ai.hand):
+                card_widget = CardWidget(card)
+                card_widget.clicked.connect(lambda widget, idx=1: self._on_card_clicked(idx, widget))
+                self.hand_grid_p2.addWidget(card_widget, 0, i)
+                self.hand_widgets_by_player[1].append(card_widget)
+
+        self._sync_legacy_selection_aliases()
+        self._update_turn_banner()
+        self._update_action_buttons()
         self._update_selected_hand_preview()
 
     def _update_hand_section_visibility(self):
         """Hide hand UI during auction and show it otherwise."""
+        self._update_hand_section_layout_order()
         show_hand_section = self.game_state.current_phase != GamePhase.AUCTION
 
         if self.hand_section_label is not None:
@@ -847,8 +960,108 @@ class GameWindow(QMainWindow):
             self.hand_preview_label.setVisible(show_hand_section)
         if hasattr(self, "hand_scroll") and self.hand_scroll is not None:
             self.hand_scroll.setVisible(show_hand_section)
+        if self.hand_section_label_p2 is not None:
+            self.hand_section_label_p2.setVisible(show_hand_section and self.game_mode == "two_player")
+        if self.hand_scroll_p2 is not None:
+            self.hand_scroll_p2.setVisible(show_hand_section and self.game_mode == "two_player")
+        if self.hand_turn_label is not None:
+            self.hand_turn_label.setVisible(show_hand_section and self.game_mode == "two_player")
         if self.hand_buttons_widget is not None:
             self.hand_buttons_widget.setVisible(show_hand_section)
+
+    def _update_hand_section_layout_order(self):
+        """Enforce deterministic hand section ordering for each game mode."""
+        if self.center_layout is None:
+            return
+        if (
+            self.hand_section_label is None
+            or self.hand_preview_label is None
+            or not hasattr(self, "hand_scroll")
+            or self.hand_scroll is None
+            or self.hand_buttons_widget is None
+        ):
+            return
+
+        anchor_widget = self.auction_board_frame if self.auction_board_frame is not None else self.played_frame
+        anchor_index = self.center_layout.indexOf(anchor_widget) if anchor_widget is not None else -1
+        if anchor_index < 0:
+            return
+
+        self.hand_section_label.setText("PLAYER 1 HAND")
+
+        managed_widgets = [
+            self.hand_preview_label,
+            self.hand_section_label,
+            self.hand_scroll,
+            self.hand_section_label_p2,
+            self.hand_scroll_p2,
+            self.hand_turn_label,
+            self.hand_buttons_widget,
+        ]
+        for widget in managed_widgets:
+            if widget is not None:
+                self.center_layout.removeWidget(widget)
+
+        insertion_index = anchor_index + 1
+        if self.game_mode == "two_player":
+            ordered_widgets = [
+                self.hand_preview_label,
+                self.hand_section_label,
+                self.hand_scroll,
+                self.hand_section_label_p2,
+                self.hand_scroll_p2,
+                self.hand_turn_label,
+                self.hand_buttons_widget,
+            ]
+        else:
+            ordered_widgets = [
+                self.hand_section_label,
+                self.hand_preview_label,
+                self.hand_scroll,
+                self.hand_buttons_widget,
+            ]
+
+        for widget in ordered_widgets:
+            if widget is not None:
+                self.center_layout.insertWidget(insertion_index, widget)
+                insertion_index += 1
+
+    def _clear_grid(self, grid: Optional[QGridLayout]):
+        """Remove all widgets from a grid layout."""
+        if grid is None:
+            return
+        while grid.count():
+            item = grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _sync_legacy_selection_aliases(self):
+        """Keep legacy single-player selection fields in sync with active player state."""
+        self.selected_cards = self.selected_cards_by_player[self.active_human_player_index]
+        self.selected_card_widgets = self.selected_widgets_by_player[self.active_human_player_index]
+        self.hand_widgets = self.hand_widgets_by_player[self.active_human_player_index]
+
+    def _active_player(self):
+        return self.game_state.player if self.active_human_player_index == 0 else self.game_state.ai
+
+    def _inactive_player(self):
+        return self.game_state.ai if self.active_human_player_index == 0 else self.game_state.player
+
+    def _update_turn_banner(self):
+        """Update two-player turn indicator and card highlights."""
+        if self.game_mode != "two_player" or self.hand_turn_label is None:
+            return
+
+        player_name = "Player 1" if self.active_human_player_index == 0 else "Player 2"
+        self.hand_turn_label.setText(f"Turn: {player_name}")
+
+    def _update_action_buttons(self):
+        """Enable or disable play/discard buttons based on active player selection."""
+        is_set_play = self.game_state.current_phase == GamePhase.SET_PLAY
+        selected = self.selected_cards_by_player[self.active_human_player_index]
+        self.play_btn.setEnabled(is_set_play and len(selected) == 5)
+        can_discard = self._active_player().can_discard()
+        self.discard_btn.setEnabled(is_set_play and can_discard and len(selected) > 0)
 
     def _update_center_header_layout(self):
         """Adjust center header visibility and sizing by phase."""
@@ -873,15 +1086,17 @@ class GameWindow(QMainWindow):
         if self.hand_preview_label is None:
             return
 
-        selected = list(self.selected_cards)
+        selected = list(self.selected_cards_by_player[self.active_human_player_index])
         if not selected:
             self.hand_preview_label.setText("Select cards to preview projected hand value")
             return
 
-        player = self.game_state.player
-        opponent = self.game_state.ai
-        disabled = self.game_state.round_disabled_jokers[0]
-        opponent_disabled = self.game_state.round_disabled_jokers[1]
+        current_idx = self.active_human_player_index
+        opponent_idx = 1 - current_idx
+        player = self.game_state.player if current_idx == 0 else self.game_state.ai
+        opponent = self.game_state.ai if current_idx == 0 else self.game_state.player
+        disabled = self.game_state.round_disabled_jokers[current_idx]
+        opponent_disabled = self.game_state.round_disabled_jokers[opponent_idx]
 
         # Use only selected cards for preview; do not auto-fill to 5 cards.
         projected_hand = None
@@ -899,6 +1114,7 @@ class GameWindow(QMainWindow):
             self.hand_preview_label.setText(
                 f"Selected: {len(selected)} card(s) | Need more cards for a valid projection"
             )
+            self.hand_preview_label.setToolTip(self.hand_preview_label.text())
             return
 
         projected_score = ScoringRules.calculate_score(
@@ -918,11 +1134,14 @@ class GameWindow(QMainWindow):
         additive_mult = projected_score.base_mult + projected_score.planet_mult + projected_score.joker_mult_bonus
         hand_name = ScoringRules.get_hand_name(projected_hand.hand_rank)
 
-        self.hand_preview_label.setText(
-            f"Selected: {len(selected)}/5 | Hand: {hand_name}\n"
-            f"Chips: {total_chips} | Mult: {additive_mult} x {projected_score.joker_x_mult:.2f}\n"
-            f"Projected Score: {projected_score.final_score}"
+        compact_text = (
+            f"{'P1' if current_idx == 0 else 'P2'} {len(selected)}/5 | "
+            f"{hand_name} | Chips {total_chips} | "
+            f"Mult {additive_mult} x {projected_score.joker_x_mult:.2f} | "
+            f"Score {projected_score.final_score}"
         )
+        self.hand_preview_label.setText(compact_text)
+        self.hand_preview_label.setToolTip(compact_text)
 
     def _evaluate_partial_hand_with_modifiers(
         self,
@@ -1024,11 +1243,13 @@ class GameWindow(QMainWindow):
 
         next_bidder = self.game_state.get_next_auction_bidder()
         next_text = "Player" if next_bidder == 0 else ("AI" if next_bidder == 1 else "Resolving")
+        if self.game_mode == "two_player":
+            next_text = "Player 1" if next_bidder == 0 else ("Player 2" if next_bidder == 1 else "Resolving")
         self.auction_turn_info_label.setText(
             f"Turn {self.game_state.auction_state.turn_index + 1}/4 | Next: {next_text} | "
             f"Spent P:{self.game_state.auction_state.player_spent} AI:{self.game_state.auction_state.ai_spent}"
         )
-        self.auction_end_turn_btn.setEnabled(next_bidder == 0)
+        self.auction_end_turn_btn.setEnabled(next_bidder in ([0, 1] if self.game_mode == "two_player" else [0]))
 
         # Rebuild auction card widgets each refresh for correctness over complexity.
         while self.auction_board_grid.count():
@@ -1100,14 +1321,14 @@ class GameWindow(QMainWindow):
             button_row.setSpacing(4)
 
             bid_btn = QPushButton("Bid +Min")
-            bid_btn.setEnabled(next_bidder == 0)
+            bid_btn.setEnabled(next_bidder in ([0, 1] if self.game_mode == "two_player" else [0]))
             bid_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_bid(card_idx))
             bid_btn.setStyleSheet("padding: 6px; font-size: 11px;")
             bid_btn.setFixedHeight(34)
             button_row.addWidget(bid_btn)
 
             reduce_btn = QPushButton("Bid -Min")
-            reduce_btn.setEnabled(next_bidder == 0)
+            reduce_btn.setEnabled(next_bidder in ([0, 1] if self.game_mode == "two_player" else [0]))
             reduce_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_reduce(card_idx))
             reduce_btn.setStyleSheet(
                 "padding: 6px; font-size: 11px; background-color: #40312a; border: 1px solid #6f5346;"
@@ -1192,11 +1413,11 @@ class GameWindow(QMainWindow):
                 "SHORTCUT": "Straight can include one rank gap",
                 "THE_TRIBE": "x2 mult if hand is a flush",
                 "THE_ORDER": "x2 mult if hand is a straight",
-                "FAMILY": "x4 mult if hand contains four of a kind",
+                "FAMILY": "x4 Mult if played hand contains Four of a Kind",
                 "RAINBOW": "x4 mult if hand contains all four suits",
                 "UNIFORM": "Spades and clubs count as same suit",
                 "SMEAR": "Hearts and diamonds count as same suit",
-                "COPYCAT": "Copies strongest mirrorable joker effect",
+                "COPYCAT": "Copies the joker effect immediately to its right",
             }
             return descriptions.get(card.joker_type.name, "Joker effect")
 
@@ -1211,17 +1432,25 @@ class GameWindow(QMainWindow):
         def to_capitalized_words(name: str) -> str:
             return "_".join(part.capitalize() for part in name.split("_"))
 
+        def resolve_with_extensions(stem_candidates: List[Path]) -> Optional[Path]:
+            for stem in stem_candidates:
+                for extension in (".webp", ".png", ".jpg", ".jpeg"):
+                    candidate = stem.with_suffix(extension)
+                    if candidate.exists():
+                        return candidate
+            return None
+
         if card.is_joker and card.joker_type is not None:
             capitalized_name = to_capitalized_words(card.joker_type.name)
-            preferred = base / "jokers" / f"Joker_{capitalized_name}.webp"
-            fallback = base / "jokers" / f"joker_{card.joker_type.name.lower()}.webp"
-            return preferred if preferred.exists() else fallback
+            preferred = base / "jokers" / f"Joker_{capitalized_name}"
+            fallback = base / "jokers" / f"joker_{card.joker_type.name.lower()}"
+            return resolve_with_extensions([preferred, fallback])
 
         if card.is_planet and card.planet_type is not None:
             capitalized_name = to_capitalized_words(card.planet_type.name)
-            preferred = base / "planets" / f"Planet_{capitalized_name}.webp"
-            fallback = base / "planets" / f"planet_{card.planet_type.name.lower()}.webp"
-            return preferred if preferred.exists() else fallback
+            preferred = base / "planets" / f"Planet_{capitalized_name}"
+            fallback = base / "planets" / f"planet_{card.planet_type.name.lower()}"
+            return resolve_with_extensions([preferred, fallback])
 
         return None
 
@@ -1234,18 +1463,12 @@ class GameWindow(QMainWindow):
             if not player.jokers:
                 QMessageBox.information(self, "No Jokers", f"{owner} has no jokers yet.")
                 return
-            entries = []
-            counts = {}
-            for joker in player.jokers:
-                counts[joker.type] = counts.get(joker.type, 0) + 1
-            for jtype, count in counts.items():
-                entries.append((
-                    jtype.name.replace("_", " ").title(),
-                    self._get_joker_description(jtype),
-                    self._get_joker_image_path(jtype),
-                    count,
-                ))
-            title = f"{owner} Joker Collection"
+            self._show_joker_collection_window(
+                title=f"{owner} Joker Collection",
+                player=player,
+                can_reorder=self._can_reorder_jokers(is_opponent),
+            )
+            return
         else:
             if not player.planets:
                 QMessageBox.information(self, "No Planets", f"{owner} has no planets yet.")
@@ -1264,6 +1487,124 @@ class GameWindow(QMainWindow):
             title = f"{owner} Planet Collection"
 
         self._show_collection_window(title, entries)
+
+    def _can_reorder_jokers(self, is_opponent: bool) -> bool:
+        """Return whether this collection can be reordered right now."""
+        if self.game_mode == "ai":
+            return not is_opponent
+
+        owner_index = 1 if is_opponent else 0
+        return (
+            self.game_state.current_phase == GamePhase.SET_PLAY
+            and self.active_human_player_index == owner_index
+        )
+
+    def _show_joker_collection_window(self, title: str, player, can_reorder: bool):
+        """Render ordered joker collection with move controls."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(900, 640)
+        dialog.setStyleSheet("background-color: #0e1428; color: #d6deeb;")
+
+        outer = QVBoxLayout(dialog)
+        header = QLabel(title)
+        header.setStyleSheet("color: #c9a66b; font-size: 18px; font-weight: bold;")
+        outer.addWidget(header)
+
+        hint = QLabel(
+            "Reorder jokers with UP/DOWN. Copycat copies the joker immediately to its right."
+            if can_reorder
+            else "Reordering disabled for this collection right now."
+        )
+        hint.setStyleSheet("color: #9fb3d3; font-size: 11px;")
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea { background-color: #0f1419; border: 1px solid #2f3c7e; border-radius: 8px; }
+            QScrollBar:vertical { background-color: #1a1a2e; width: 10px; }
+            QScrollBar::handle:vertical { background-color: #0f3460; }
+        """)
+
+        content = QWidget()
+        rows = QVBoxLayout(content)
+        rows.setSpacing(10)
+        rows.setContentsMargins(12, 12, 12, 12)
+
+        def clear_rows():
+            while rows.count():
+                item = rows.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        def move_joker(index: int, delta: int):
+            new_index = index + delta
+            if index < 0 or index >= len(player.jokers):
+                return
+            if new_index < 0 or new_index >= len(player.jokers):
+                return
+            player.jokers[index], player.jokers[new_index] = player.jokers[new_index], player.jokers[index]
+            render_rows()
+            self._update_display()
+
+        def render_rows():
+            clear_rows()
+            for idx, joker in enumerate(player.jokers):
+                frame = QFrame()
+                frame.setStyleSheet("background-color: #121c33; border: 1px solid #2a3d66; border-radius: 8px;")
+                row = QHBoxLayout(frame)
+                row.setContentsMargins(10, 10, 10, 10)
+                row.setSpacing(10)
+
+                image = QLabel("Image Missing")
+                image.setAlignment(Qt.AlignCenter)
+                image.setFixedSize(92, 92)
+                image.setStyleSheet("background-color: #0c1223; border: 1px solid #2f3c7e; border-radius: 6px;")
+                image_path = self._get_joker_image_path(joker.type)
+                if image_path and image_path.exists():
+                    pixmap = QPixmap(str(image_path))
+                    if not pixmap.isNull():
+                        image.setPixmap(pixmap.scaled(88, 88, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                        image.setText("")
+                row.addWidget(image)
+
+                text_col = QVBoxLayout()
+                name = joker.type.name.replace("_", " ").title()
+                name_label = QLabel(f"{idx + 1}. {name}")
+                name_label.setStyleSheet("color: #c9a66b; font-size: 13px; font-weight: bold;")
+                text_col.addWidget(name_label)
+
+                desc_label = QLabel(self._get_joker_description(joker.type))
+                desc_label.setStyleSheet("color: #c8d3e6; font-size: 11px;")
+                desc_label.setWordWrap(True)
+                text_col.addWidget(desc_label)
+                row.addLayout(text_col, 1)
+
+                controls = QVBoxLayout()
+                up_btn = QPushButton("UP")
+                down_btn = QPushButton("DOWN")
+                up_btn.setEnabled(can_reorder and idx > 0)
+                down_btn.setEnabled(can_reorder and idx < len(player.jokers) - 1)
+                up_btn.clicked.connect(lambda _, i=idx: move_joker(i, -1))
+                down_btn.clicked.connect(lambda _, i=idx: move_joker(i, 1))
+                controls.addWidget(up_btn)
+                controls.addWidget(down_btn)
+                row.addLayout(controls)
+
+                rows.addWidget(frame)
+
+            rows.addStretch()
+
+        render_rows()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        self.collection_windows.append(dialog)
+        dialog.finished.connect(lambda _: self.collection_windows.remove(dialog) if dialog in self.collection_windows else None)
+        dialog.show()
 
     def _show_collection_window(self, title: str, entries: List[tuple]):
         """Render a scrollable gallery window for collection entries."""
@@ -1352,11 +1693,11 @@ class GameWindow(QMainWindow):
             JokerType.SHORTCUT: "Straight can include one rank gap",
             JokerType.THE_TRIBE: "x2 mult if hand is a flush",
             JokerType.THE_ORDER: "x2 mult if hand is a straight",
-            JokerType.FAMILY: "x4 mult if hand contains four of a kind",
+            JokerType.FAMILY: "x4 Mult if played hand contains Four of a Kind",
             JokerType.RAINBOW: "x4 mult if hand contains all four suits",
             JokerType.UNIFORM: "Spades and clubs count as same suit",
             JokerType.SMEAR: "Hearts and diamonds count as same suit",
-            JokerType.COPYCAT: "Copies strongest mirrorable joker effect",
+            JokerType.COPYCAT: "Copies the joker effect immediately to its right",
         }
         return descriptions.get(jtype, "Joker effect")
 
@@ -1372,41 +1713,62 @@ class GameWindow(QMainWindow):
         root = Path(__file__).resolve().parent.parent
         base = root / "assets" / "auction_cards" / "jokers"
         capitalized_name = "_".join(part.capitalize() for part in jtype.name.split("_"))
-        preferred = base / f"Joker_{capitalized_name}.webp"
-        fallback = base / f"joker_{jtype.name.lower()}.webp"
-        return preferred if preferred.exists() else fallback
+        candidates = [
+            base / f"Joker_{capitalized_name}",
+            base / f"joker_{jtype.name.lower()}",
+        ]
+        for stem in candidates:
+            for extension in (".webp", ".png", ".jpg", ".jpeg"):
+                candidate = stem.with_suffix(extension)
+                if candidate.exists():
+                    return candidate
+        return candidates[-1].with_suffix(".webp")
 
     @staticmethod
     def _get_planet_image_path(planet: Planet) -> Path:
         root = Path(__file__).resolve().parent.parent
         base = root / "assets" / "auction_cards" / "planets"
         capitalized_name = "_".join(part.capitalize() for part in planet.name.split("_"))
-        preferred = base / f"Planet_{capitalized_name}.webp"
-        fallback = base / f"planet_{planet.name.lower()}.webp"
-        return preferred if preferred.exists() else fallback
+        candidates = [
+            base / f"Planet_{capitalized_name}",
+            base / f"planet_{planet.name.lower()}",
+        ]
+        for stem in candidates:
+            for extension in (".webp", ".png", ".jpg", ".jpeg"):
+                candidate = stem.with_suffix(extension)
+                if candidate.exists():
+                    return candidate
+        return candidates[-1].with_suffix(".webp")
 
-    def _on_card_clicked(self, card_widget: CardWidget):
+    def _on_card_clicked(self, player_index: int, card_widget: CardWidget):
         """Handle card click."""
         if self.game_state.current_phase != GamePhase.SET_PLAY:
             return
 
-        if card_widget not in self.hand_widgets:
+        if self.game_mode == "ai" and player_index != 0:
+            return
+        if self.game_mode == "two_player" and player_index != self.active_human_player_index:
             return
 
+        if card_widget not in self.hand_widgets_by_player[player_index]:
+            return
+
+        selected_widgets = self.selected_widgets_by_player[player_index]
+        selected_cards = self.selected_cards_by_player[player_index]
+
         # Track by widget identity so duplicate value cards can be selected independently.
-        if card_widget in self.selected_card_widgets:
-            idx = self.selected_card_widgets.index(card_widget)
-            self.selected_card_widgets.pop(idx)
-            self.selected_cards.pop(idx)
+        if card_widget in selected_widgets:
+            idx = selected_widgets.index(card_widget)
+            selected_widgets.pop(idx)
+            selected_cards.pop(idx)
             card_widget.set_selected(False)
         else:
-            self.selected_card_widgets.append(card_widget)
-            self.selected_cards.append(card_widget.card)
+            selected_widgets.append(card_widget)
+            selected_cards.append(card_widget.card)
             card_widget.set_selected(True)
 
-        # Update buttons
-        self.play_btn.setEnabled(len(self.selected_cards) == 5)
-        self.discard_btn.setEnabled(len(self.selected_cards) > 0)
+        self._sync_legacy_selection_aliases()
+        self._update_action_buttons()
         self._update_selected_hand_preview()
 
     def _handle_play_hand(self):
@@ -1414,77 +1776,131 @@ class GameWindow(QMainWindow):
         if self.game_state.current_phase != GamePhase.SET_PLAY:
             return
 
-        if len(self.selected_cards) != 5:
+        active_idx = self.active_human_player_index if self.game_mode == "two_player" else 0
+        selected_cards = self.selected_cards_by_player[active_idx]
+
+        if len(selected_cards) != 5:
             QMessageBox.warning(self, "Invalid", "Select exactly 5 cards!")
             return
+
+        active_player = self.game_state.player if active_idx == 0 else self.game_state.ai
+        opponent_player = self.game_state.ai if active_idx == 0 else self.game_state.player
+        disabled = self.game_state.round_disabled_jokers[active_idx]
+        opponent_disabled = self.game_state.round_disabled_jokers[1 - active_idx]
 
         # Validate it's a legal hand
         try:
             hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
-                self.selected_cards,
-                self.game_state.player,
-                self.game_state.round_disabled_jokers[0],
+                selected_cards,
+                active_player,
+                disabled,
             )
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Invalid hand: {e}")
             return
 
-        # Store player's played cards
-        self.player_played_cards = self.selected_cards.copy()
+        if active_idx == 0:
+            self.player_played_cards = selected_cards.copy()
+        else:
+            self.ai_played_cards = selected_cards.copy()
 
         # Remove played cards from hand
-        for card in self.selected_cards:
-            self.game_state.player.hand.remove(card)
+        for card in selected_cards:
+            active_player.hand.remove(card)
 
         hand_score = ScoringRules.calculate_score(
             hand,
-            self.game_state.player,
-            self.game_state.ai,
-            disabled_jokers=self.game_state.round_disabled_jokers[0],
-            opponent_disabled_jokers=self.game_state.round_disabled_jokers[1],
+            active_player,
+            opponent_player,
+            opponent_hand_cards=self.player_played_cards if active_idx == 1 else self.ai_played_cards,
+            disabled_jokers=disabled,
+            opponent_disabled_jokers=opponent_disabled,
         )
-        self.action_log.add_log_entry(f"Player played {hand.hand_rank.name}: {hand_score.final_score} pts")
+        actor = "Player" if self.game_mode == "ai" and active_idx == 0 else ("Player 1" if active_idx == 0 else "Player 2")
+        self.action_log.add_log_entry(f"{actor} played {hand.hand_rank.name}: {hand_score.final_score} pts")
 
         # Clear selection
-        self.selected_cards = []
-        self.selected_card_widgets = []
+        self.selected_cards_by_player[active_idx] = []
+        self.selected_widgets_by_player[active_idx] = []
+        self._sync_legacy_selection_aliases()
         self._update_hand_display()
         self._update_played_hands_display()
 
-        # Disable buttons temporarily
-        self.play_btn.setEnabled(False)
-        self.discard_btn.setEnabled(False)
+        if self.game_mode == "two_player":
+            if active_idx == 0 and self.ai_played_cards is None:
+                self.active_human_player_index = 1
+                self._sync_legacy_selection_aliases()
+                self._update_hand_display()
+                self.action_log.add_log_entry("Player 2 turn")
+                return
 
-        # Schedule AI action
-        self.ai_timer.start(1000)
+            if self.player_played_cards and self.ai_played_cards:
+                player_target, ai_target = self._prompt_copyright_targets_if_needed(
+                    self.player_played_cards,
+                    self.ai_played_cards,
+                )
+                self.game_state.score_set(
+                    self.player_played_cards,
+                    self.ai_played_cards,
+                    player_copyright_target=player_target,
+                    ai_copyright_target=ai_target,
+                )
+                self.game_state.end_set()
+                self.active_human_player_index = 0
+                self._update_display()
+
+                if self.game_state.current_phase == GamePhase.GAME_OVER:
+                    self._show_game_over()
+                    return
+
+                if self.game_state.current_phase == GamePhase.AUCTION:
+                    self.action_log.add_log_entry("Auction phase started")
+                    return
+
+                self.player_played_cards = None
+                self.ai_played_cards = None
+                self.action_log.add_log_entry(f"Set {self.game_state.current_set} started")
+                return
+        else:
+            # Disable buttons temporarily
+            self.play_btn.setEnabled(False)
+            self.discard_btn.setEnabled(False)
+            # Schedule AI action
+            self.ai_timer.start(1000)
 
     def _handle_discard(self):
         """Handle discard button click."""
         if self.game_state.current_phase != GamePhase.SET_PLAY:
             return
 
-        if not self.game_state.player.can_discard():
+        active_idx = self.active_human_player_index if self.game_mode == "two_player" else 0
+        active_player = self.game_state.player if active_idx == 0 else self.game_state.ai
+        selected_cards = self.selected_cards_by_player[active_idx]
+
+        if not active_player.can_discard():
             QMessageBox.warning(self, "No Discards", "No discard actions remaining!")
             return
 
-        if len(self.selected_cards) == 0:
+        if len(selected_cards) == 0:
             QMessageBox.warning(self, "Invalid", "Select at least 1 card to discard!")
             return
 
         # Remove discarded cards
-        for card in self.selected_cards:
-            self.game_state.player.hand.remove(card)
+        for card in selected_cards:
+            active_player.hand.remove(card)
 
-        self.game_state.player.discard_actions_used += 1
-        cards_discarded = len(self.selected_cards)
+        active_player.discard_actions_used += 1
+        cards_discarded = len(selected_cards)
 
         # Redraw
-        self.game_state.draw_cards(self.game_state.player, cards_discarded)
+        self.game_state.draw_cards(active_player, cards_discarded)
 
-        self.action_log.add_log_entry(f"Player discarded {cards_discarded} cards")
+        actor = "Player" if self.game_mode == "ai" and active_idx == 0 else ("Player 1" if active_idx == 0 else "Player 2")
+        self.action_log.add_log_entry(f"{actor} discarded {cards_discarded} cards")
 
-        self.selected_cards = []
-        self.selected_card_widgets = []
+        self.selected_cards_by_player[active_idx] = []
+        self.selected_widgets_by_player[active_idx] = []
+        self._sync_legacy_selection_aliases()
         self._update_hand_display()
 
     def _handle_auction_min_raise(self):
@@ -1504,33 +1920,52 @@ class GameWindow(QMainWindow):
 
     def _handle_auction_card_bid(self, card_index: int):
         """Bid minimum raise on a specific auction card during player's turn."""
-        if self.game_state.get_next_auction_bidder() != 0:
+        next_bidder = self.game_state.get_next_auction_bidder()
+        if self.game_mode == "ai" and next_bidder != 0:
+            return
+        if self.game_mode == "two_player" and next_bidder not in (0, 1):
             return
 
         min_bid = self.game_state.get_card_min_next_bid(card_index)
-        if self.game_state.place_auction_bid_for_card(0, card_index, min_bid):
+        bidder = next_bidder if self.game_mode == "two_player" else 0
+        if self.game_state.place_auction_bid_for_card(bidder, card_index, min_bid):
             card_name = str(self.game_state.auction_state.revealed_cards[card_index])
-            self.action_log.add_log_entry(f"Player bids {min_bid} on {card_name}")
+            actor = "Player" if self.game_mode == "ai" else ("Player 1" if bidder == 0 else "Player 2")
+            self.action_log.add_log_entry(f"{actor} bids {min_bid} on {card_name}")
             self._update_display()
 
     def _handle_auction_card_reduce(self, card_index: int):
         """Reduce player's bid by card minimum on a specific auction card."""
-        if self.game_state.get_next_auction_bidder() != 0:
+        next_bidder = self.game_state.get_next_auction_bidder()
+        if self.game_mode == "ai" and next_bidder != 0:
+            return
+        if self.game_mode == "two_player" and next_bidder not in (0, 1):
             return
 
-        if self.game_state.reduce_auction_bid_for_card(0, card_index):
+        bidder = next_bidder if self.game_mode == "two_player" else 0
+        if self.game_state.reduce_auction_bid_for_card(bidder, card_index):
             card_name = str(self.game_state.auction_state.revealed_cards[card_index])
-            reduced_to = self.game_state.auction_state.card_player_bids[card_index]
-            self.action_log.add_log_entry(f"Player reduces bid to {reduced_to} on {card_name}")
+            reduced_to = (
+                self.game_state.auction_state.card_player_bids[card_index]
+                if bidder == 0
+                else self.game_state.auction_state.card_ai_bids[card_index]
+            )
+            actor = "Player" if self.game_mode == "ai" else ("Player 1" if bidder == 0 else "Player 2")
+            self.action_log.add_log_entry(f"{actor} reduces bid to {reduced_to} on {card_name}")
             self._update_display()
 
     def _handle_auction_end_turn(self):
         """End player's auction turn and pass bidding control to AI."""
-        if self.game_state.get_next_auction_bidder() != 0:
+        next_bidder = self.game_state.get_next_auction_bidder()
+        if self.game_mode == "ai" and next_bidder != 0:
+            return
+        if self.game_mode == "two_player" and next_bidder not in (0, 1):
             return
 
-        if self.game_state.end_auction_turn(0):
-            self.action_log.add_log_entry("Player ends bidding turn")
+        actor = next_bidder if self.game_mode == "two_player" else 0
+        if self.game_state.end_auction_turn(actor):
+            actor_name = "Player" if self.game_mode == "ai" else ("Player 1" if actor == 0 else "Player 2")
+            self.action_log.add_log_entry(f"{actor_name} ends bidding turn")
             self._after_auction_action()
 
     def _handle_human_joker_overflow(self):
@@ -1566,16 +2001,20 @@ class GameWindow(QMainWindow):
 
         if self.game_state.current_phase == GamePhase.AUCTION:
             next_bidder = self.game_state.get_next_auction_bidder()
-            if next_bidder == 1:
+            if self.game_mode == "ai" and next_bidder == 1:
                 self.ai_timer.start(800)
         else:
             self.player_played_cards = None
             self.ai_played_cards = None
+            self.active_human_player_index = 0
             self.action_log.add_log_entry(f"Set {self.game_state.current_set} started")
 
     def _perform_ai_action(self):
         """Perform the AI's action."""
         self.ai_timer.stop()
+
+        if self.game_mode == "two_player":
+            return
 
         if self.game_state.current_phase == GamePhase.AUCTION:
             self._perform_ai_auction_action()
@@ -1583,7 +2022,16 @@ class GameWindow(QMainWindow):
 
         # If both players have played, score the set
         if self.player_played_cards and self.ai_played_cards:
-            self.game_state.score_set(self.player_played_cards, self.ai_played_cards)
+            player_target, ai_target = self._prompt_copyright_targets_if_needed(
+                self.player_played_cards,
+                self.ai_played_cards,
+            )
+            self.game_state.score_set(
+                self.player_played_cards,
+                self.ai_played_cards,
+                player_copyright_target=player_target,
+                ai_copyright_target=ai_target,
+            )
             self.game_state.end_set()
             self._update_display()
 
@@ -1624,6 +2072,7 @@ class GameWindow(QMainWindow):
                     ai_hand,
                     self.game_state.ai,
                     self.game_state.player,
+                    opponent_hand_cards=self.player_played_cards,
                     disabled_jokers=self.game_state.round_disabled_jokers[1],
                     opponent_disabled_jokers=self.game_state.round_disabled_jokers[0],
                 )
@@ -1640,6 +2089,64 @@ class GameWindow(QMainWindow):
                 self.action_log.add_log_entry(f"AI discarded {len(cards_to_discard)} cards")
                 self._update_display()
                 self.ai_timer.start(1000)
+
+    def _prompt_copyright_targets_if_needed(self, player_cards: List[Card], ai_cards: List[Card]):
+        """Prompt manual COPYRIGHT targets when tied hand ranks trigger the effect."""
+        try:
+            player_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                player_cards,
+                self.game_state.player,
+                self.game_state.round_disabled_jokers[0],
+            )
+            ai_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                ai_cards,
+                self.game_state.ai,
+                self.game_state.round_disabled_jokers[1],
+            )
+        except Exception:
+            return None, None
+
+        if player_hand.hand_rank != ai_hand.hand_rank:
+            return None, None
+
+        player_target = None
+        ai_target = None
+
+        # In AI mode, human chooses their own COPYRIGHT target if active.
+        if self.game_mode == "ai":
+            if self.game_state.has_active_copyright(0):
+                player_target = self._prompt_copyright_target(disabler_index=0, target_index=1)
+            return player_target, None
+
+        # In local 2-player mode, both sides choose if they can trigger COPYRIGHT.
+        if self.game_state.has_active_copyright(0):
+            player_target = self._prompt_copyright_target(disabler_index=0, target_index=1)
+        if self.game_state.has_active_copyright(1):
+            ai_target = self._prompt_copyright_target(disabler_index=1, target_index=0)
+        return player_target, ai_target
+
+    def _prompt_copyright_target(self, disabler_index: int, target_index: int):
+        """Prompt one side to choose an opponent joker to disable for the round."""
+        targets = self.game_state.get_active_copyright_targets(target_index)
+        if not targets:
+            return None
+
+        options = [str(joker) for joker in targets]
+        actor = "Player" if self.game_mode == "ai" else ("Player 1" if disabler_index == 0 else "Player 2")
+        choice, ok = QInputDialog.getItem(
+            self,
+            f"COPYRIGHT Trigger - {actor}",
+            "Choose an opponent joker to disable for this round:",
+            options,
+            0,
+            False,
+        )
+
+        if not ok:
+            return None
+
+        choice_index = options.index(choice)
+        return targets[choice_index]
 
     def _perform_ai_auction_action(self):
         """Perform AI action during auction phase."""

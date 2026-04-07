@@ -1,6 +1,6 @@
 """Core game models: Card, Hand, Player, Jokers, Planets."""
 
-from enum import Enum
+from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import List, Set
 from collections import Counter
@@ -106,34 +106,63 @@ class Planet(Enum):
 class JokerType(Enum):
     """Joker types and rarity."""
     # Common
-    BANNER = "Common"
-    ABSTRACT = "Common"
-    EVEN_STEVEN = "Common"
-    ODD_TODD = "Common"
-    BLACK_HOLE = "Common"
-    THE_DUO = "Common"
-    THE_GREEDY = "Common"
-    THE_LOVER = "Common"
-    THE_PROTECTOR = "Common"
-    THE_CHAIRMAN = "Common"
+    BANNER = auto()
+    ABSTRACT = auto()
+    EVEN_STEVEN = auto()
+    ODD_TODD = auto()
+    BLACK_HOLE = auto()
+    THE_DUO = auto()
+    THE_GREEDY = auto()
+    THE_LOVER = auto()
+    THE_PROTECTOR = auto()
+    THE_CHAIRMAN = auto()
 
     # Rare
-    SCRAPPY = "Rare"
-    STRAITJACKET = "Rare"
-    COPYRIGHT = "Rare"
-    TAX_MAN = "Rare"
-    TRADE_INSIDER = "Rare"
-    FOUR_FINGERS = "Rare"
-    SHORTCUT = "Rare"
-    THE_TRIBE = "Rare"
-    THE_ORDER = "Rare"
+    SCRAPPY = auto()
+    STRAITJACKET = auto()
+    COPYRIGHT = auto()
+    TAX_MAN = auto()
+    TRADE_INSIDER = auto()
+    FOUR_FINGERS = auto()
+    SHORTCUT = auto()
+    THE_TRIBE = auto()
+    THE_ORDER = auto()
 
     # Legendary
-    FAMILY = "Legendary"
-    RAINBOW = "Legendary"
-    UNIFORM = "Legendary"
-    SMEAR = "Legendary"
-    COPYCAT = "Legendary"
+    FAMILY = auto()
+    RAINBOW = auto()
+    UNIFORM = auto()
+    SMEAR = auto()
+    COPYCAT = auto()
+
+    @property
+    def rarity(self) -> str:
+        if self in {
+            JokerType.BANNER,
+            JokerType.ABSTRACT,
+            JokerType.EVEN_STEVEN,
+            JokerType.ODD_TODD,
+            JokerType.BLACK_HOLE,
+            JokerType.THE_DUO,
+            JokerType.THE_GREEDY,
+            JokerType.THE_LOVER,
+            JokerType.THE_PROTECTOR,
+            JokerType.THE_CHAIRMAN,
+        }:
+            return "Common"
+        if self in {
+            JokerType.SCRAPPY,
+            JokerType.STRAITJACKET,
+            JokerType.COPYRIGHT,
+            JokerType.TAX_MAN,
+            JokerType.TRADE_INSIDER,
+            JokerType.FOUR_FINGERS,
+            JokerType.SHORTCUT,
+            JokerType.THE_TRIBE,
+            JokerType.THE_ORDER,
+        }:
+            return "Rare"
+        return "Legendary"
 
 
 @dataclass

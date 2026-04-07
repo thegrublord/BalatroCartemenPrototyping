@@ -118,21 +118,47 @@ class GameState:
             Planet.NEPTUNE: 300,
         }
 
-        # Add all jokers (5 copies each for strategy)
+        joker_copy_counts = {
+            JokerType.BANNER: 3,
+            JokerType.ABSTRACT: 3,
+            JokerType.EVEN_STEVEN: 3,
+            JokerType.ODD_TODD: 3,
+            JokerType.BLACK_HOLE: 3,
+            JokerType.THE_DUO: 3,
+            JokerType.THE_GREEDY: 2,
+            JokerType.THE_LOVER: 2,
+            JokerType.THE_PROTECTOR: 2,
+            JokerType.THE_CHAIRMAN: 2,
+            JokerType.SCRAPPY: 2,
+            JokerType.STRAITJACKET: 2,
+            JokerType.COPYRIGHT: 2,
+            JokerType.TAX_MAN: 2,
+            JokerType.TRADE_INSIDER: 2,
+            JokerType.FOUR_FINGERS: 2,
+            JokerType.SHORTCUT: 2,
+            JokerType.THE_TRIBE: 2,
+            JokerType.THE_ORDER: 2,
+            JokerType.FAMILY: 1,
+            JokerType.RAINBOW: 1,
+            JokerType.UNIFORM: 1,
+            JokerType.SMEAR: 1,
+            JokerType.COPYCAT: 1,
+        }
+
         for jtype in JokerType:
-            for _ in range(2):  # 2 copies of each joker
+            for _ in range(joker_copy_counts.get(jtype, 1)):
                 self.auction_deck.append(AuctionCard(
                     id=card_id,
                     is_joker=True,
                     is_planet=False,
                     joker_type=jtype,
-                    minimum_bid=joker_min_bid_by_rarity.get(jtype.value, 100)
+                    minimum_bid=joker_min_bid_by_rarity.get(jtype.rarity, 100)
                 ))
                 card_id += 1
 
-        # Add planets (multiple copies)
+        planet_copy_count = 5
         for planet in Planet:
-            for _ in range(3):  # 3 copies of each planet
+            for _ in range(planet_copy_count):
                 self.auction_deck.append(AuctionCard(
                     id=card_id,
                     is_joker=False,
@@ -177,7 +203,13 @@ class GameState:
         self.current_phase = GamePhase.SET_PLAY
         self.add_action(f"Round {self.current_round}, Set {self.current_set} started")
 
-    def score_set(self, player_cards: List[Card], ai_cards: List[Card]):
+    def score_set(
+        self,
+        player_cards: List[Card],
+        ai_cards: List[Card],
+        player_copyright_target: Optional[Joker] = None,
+        ai_copyright_target: Optional[Joker] = None,
+    ):
         """Score a set based on played hands."""
         player_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
             player_cards, self.player, self.round_disabled_jokers[0]
@@ -188,12 +220,16 @@ class GameState:
 
         # Copyright: same hand type disables one opponent joker for the round.
         if player_hand.hand_rank == ai_hand.hand_rank:
-            self._apply_copyright_round_disable()
+            self._apply_copyright_round_disable(
+                player_target=player_copyright_target,
+                ai_target=ai_copyright_target,
+            )
 
         player_score = ScoringRules.calculate_score(
             player_hand,
             self.player,
             self.ai,
+            opponent_hand_cards=ai_hand.cards,
             disabled_jokers=self.round_disabled_jokers[0],
             opponent_disabled_jokers=self.round_disabled_jokers[1],
         )
@@ -201,6 +237,7 @@ class GameState:
             ai_hand,
             self.ai,
             self.player,
+            opponent_hand_cards=player_hand.cards,
             disabled_jokers=self.round_disabled_jokers[1],
             opponent_disabled_jokers=self.round_disabled_jokers[0],
         )
@@ -226,19 +263,47 @@ class GameState:
         self.player.discard_actions_max = max(0, 2 + player_scrappy - player_jacketed)
         self.ai.discard_actions_max = max(0, 2 + ai_scrappy - ai_jacketed)
 
-    def _apply_copyright_round_disable(self):
+    def _apply_copyright_round_disable(
+        self,
+        player_target: Optional[Joker] = None,
+        ai_target: Optional[Joker] = None,
+    ):
         """Disable one opponent joker for the entire round when COPYRIGHT triggers."""
         if self._player_has_active_joker(self.player, JokerType.COPYRIGHT, 0):
-            target = self._pick_highest_value_active_joker(self.ai, 1)
+            target = player_target if self._is_active_copyright_target(player_target, self.ai, 1) else self._pick_highest_value_active_joker(self.ai, 1)
             if target is not None:
                 self.round_disabled_jokers[1].append(target)
                 self.add_action(f"COPYRIGHT: Player disables AI joker {target}")
 
         if self._player_has_active_joker(self.ai, JokerType.COPYRIGHT, 1):
-            target = self._pick_highest_value_active_joker(self.player, 0)
+            target = ai_target if self._is_active_copyright_target(ai_target, self.player, 0) else self._pick_highest_value_active_joker(self.player, 0)
             if target is not None:
                 self.round_disabled_jokers[0].append(target)
                 self.add_action(f"COPYRIGHT: AI disables Player joker {target}")
+
+    def has_active_copyright(self, player_index: int) -> bool:
+        """Public helper to check whether a side can trigger COPYRIGHT now."""
+        player = self.player if player_index == 0 else self.ai
+        return self._player_has_active_joker(player, JokerType.COPYRIGHT, player_index)
+
+    def get_active_copyright_targets(self, target_index: int) -> List[Joker]:
+        """Public helper to list valid COPYRIGHT targets for a side."""
+        target_player = self.player if target_index == 0 else self.ai
+        return self._get_active_copyright_targets(target_player, target_index)
+
+    def _is_active_copyright_target(self, target: Optional[Joker], target_player: Player, target_index: int) -> bool:
+        """Check if target joker is currently valid for COPYRIGHT disable."""
+        if target is None:
+            return False
+        return target in self._get_active_copyright_targets(target_player, target_index)
+
+    def _get_active_copyright_targets(self, target: Player, target_index: int) -> List[Joker]:
+        """List active target jokers that can be disabled by COPYRIGHT."""
+        disabled = self.round_disabled_jokers[target_index]
+        return [
+            j for j in target.jokers
+            if j not in disabled and j.type != JokerType.COPYRIGHT
+        ]
 
     def _player_has_active_joker(self, player: Player, jtype: JokerType, player_index: int) -> bool:
         """Check if player has at least one active (non-disabled) joker type."""
@@ -250,11 +315,7 @@ class GameState:
 
     def _pick_highest_value_active_joker(self, target: Player, target_index: int) -> Optional[Joker]:
         """Pick strongest active target joker for automatic COPYRIGHT behavior."""
-        disabled = self.round_disabled_jokers[target_index]
-        active = [
-            j for j in target.jokers
-            if j not in disabled and j.type != JokerType.COPYRIGHT
-        ]
+        active = self._get_active_copyright_targets(target, target_index)
         if not active:
             return None
         return max(active, key=lambda j: self._ai_joker_value(j.type))
@@ -302,19 +363,9 @@ class GameState:
         self.player.hand = []
         self.ai.hand = []
 
-        # Reveal 5 cards
-        self.auction_state.revealed_cards = []
-        revealed_keys = set()
-        deck_index = 0
-        while len(self.auction_state.revealed_cards) < 5 and deck_index < len(self.auction_deck):
-            card = self.auction_deck[deck_index]
-            key = self._auction_card_key(card)
-            if key not in revealed_keys:
-                revealed_keys.add(key)
-                self.auction_state.revealed_cards.append(card)
-                self.auction_deck.pop(deck_index)
-                continue
-            deck_index += 1
+        # Reveal up to 5 unique card types from remaining supply without consuming
+        # cards until they are actually won.
+        self.auction_state.revealed_cards = self._build_unique_auction_reveal(self.auction_deck, limit=5)
 
         self.auction_state.current_card_index = 0
         self.auction_state.card_bids = [0 for _ in self.auction_state.revealed_cards]
@@ -336,6 +387,32 @@ class GameState:
             f"Auction phase started. {len(self.auction_state.revealed_cards)} cards revealed. "
             f"First bidder: {'Player' if self.auction_state.first_bidder == 0 else 'AI'}."
         )
+
+    def _build_unique_auction_reveal(self, source_cards: List[AuctionCard], limit: int = 5) -> List[AuctionCard]:
+        """Build a reveal list with unique card types from source order."""
+        revealed_cards: List[AuctionCard] = []
+        revealed_keys = set()
+
+        for card in source_cards:
+            if len(revealed_cards) >= limit:
+                break
+            key = self._auction_card_key(card)
+            if key not in revealed_keys:
+                revealed_keys.add(key)
+                revealed_cards.append(card)
+
+        return revealed_cards
+
+    def get_next_auction_jokers(self, limit: int = 2) -> List[JokerType]:
+        """Peek up to N joker types that will appear in the next auction reveal."""
+        revealed_cards = self._build_unique_auction_reveal(self.auction_deck, limit=5)
+        joker_types: List[JokerType] = []
+        for card in revealed_cards:
+            if card.is_joker and card.joker_type is not None:
+                joker_types.append(card.joker_type)
+                if len(joker_types) >= limit:
+                    break
+        return joker_types
 
     @staticmethod
     def _auction_card_key(card: AuctionCard):
@@ -526,7 +603,22 @@ class GameState:
                 self.auction_state.ai_spent += winning_bid
             self.add_action(f"{winner.name} won {card} for {winning_bid} momentum")
 
+        self._cycle_revealed_cards_to_back(self.auction_state.revealed_cards)
+
         self._finish_auction()
+
+    def _cycle_revealed_cards_to_back(self, revealed_cards: List[AuctionCard]):
+        """Move revealed unsold cards to the back so next auction cycles to fresh cards."""
+        carry_to_back = [card for card in revealed_cards if card in self.auction_deck]
+        if not carry_to_back:
+            return
+
+        remaining = [card for card in self.auction_deck if card not in carry_to_back]
+        self.auction_deck = remaining + carry_to_back
+
+        self.add_action(
+            f"{len(carry_to_back)} revealed unsold card(s) cycled to back of auction deck."
+        )
 
     def _resolve_current_auction_card(self):
         """Resolve the current auction card after 4 turns."""
@@ -567,6 +659,8 @@ class GameState:
 
         if card.is_joker and card.joker_type is not None:
             player.jokers.append(Joker(type=card.joker_type))
+            if card in self.auction_deck:
+                self.auction_deck.remove(card)
 
             if winner_index == 1 and len(player.jokers) > 5:
                 # AI auto-removes lowest value joker when over cap.
@@ -577,6 +671,8 @@ class GameState:
 
         elif card.is_planet and card.planet_type is not None:
             player.planets.append(card.planet_type)
+            if card in self.auction_deck:
+                self.auction_deck.remove(card)
 
     def _auto_trim_ai_jokers(self):
         """Auto-discard AI's lowest value joker when over cap."""
@@ -627,6 +723,11 @@ class GameState:
         removed = self.player.jokers.pop(joker_index)
         self.auction_state.pending_human_joker_choice = False
         self.add_action(f"Player discards joker {removed} to stay at 5 jokers")
+
+        # Resume auction settlement now that overflow choice is resolved.
+        if self.auction_state.is_active:
+            self._finish_auction()
+
         return True
 
     def _finish_auction(self):
