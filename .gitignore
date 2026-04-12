@@ -7,3 +7,10 @@ venv/
 .env
 .pytest_cache/
 .vscode/
+
+# Build and distribution files
+build/
+release/
+dist/
+*.spec
+*.log

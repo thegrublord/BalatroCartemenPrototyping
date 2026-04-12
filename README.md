@@ -72,6 +72,16 @@ app/
 
 ## Running the Application
 
+### Quick Start: Standalone Executable (No Python Required)
+
+Download and run the prebuilt executable:
+
+1. **Download** the latest executable from [GitHub Releases](https://github.com/thegrublord/BalatroCartemenPrototyping/releases)
+2. **Extract** the ZIP file to a folder
+3. **Run** `BalatroCartemen.exe`
+
+The executable is self-contained with all dependencies bundled. No Python or additional installation needed.
+
 ### Desktop Game (GUI)
 
 Launch the interactive desktop game:
@@ -147,6 +157,24 @@ The AI uses heuristic-based decision making for:
 **Simulation produces no output**
 - Check that `simulation/` folder contains all required modules
 - Verify CSV files are created in the working directory
+
+## Building the Standalone Executable
+
+To create a standalone Windows executable for yourself:
+
+1. **Install PyInstaller:**
+   ```bash
+   pip install pyinstaller
+   ```
+
+2. **Build the executable:**
+   ```bash
+   python -m PyInstaller --distpath ".\release" --workpath ".\build" --onedir --windowed --add-data "assets:assets" --name "BalatroCartemen" main.py
+   ```
+
+3. **The executable will be created in:** `release/BalatroCartemen/BalatroCartemen.exe`
+
+You can then distribute the entire `release/BalatroCartemen/` folder with the `.exe` file.
 
 ## Author
 
