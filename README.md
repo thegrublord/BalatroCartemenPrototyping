@@ -91,7 +91,7 @@ python main.py
 ```
 
 This opens a graphical window where you can:
-- Play against an AI opponent
+- Choose to play against an AI opponent or another person
 - Bid on cards in auctions
 - Select and play hands
 - Use joker modifiers to enhance scoring
