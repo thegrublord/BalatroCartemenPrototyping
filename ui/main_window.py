@@ -1,9 +1,11 @@
 """Main game window."""
 
+from html import escape
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
     QPushButton, QLabel, QGridLayout, QMessageBox, QScrollArea,
-    QSpinBox, QInputDialog, QDialog, QSizePolicy
+    QSpinBox, QInputDialog, QDialog, QSizePolicy, QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSize
 from PySide6.QtGui import QFont, QColor, QIcon, QPixmap
@@ -17,6 +19,17 @@ from game import (
 )
 from ui.card_widgets import CardWidget
 from ui.panels import MomentumBar, PlayerInfoPanel, ActionLogPanel
+
+
+class ClickableLabel(QLabel):
+    """Label that emits a signal when clicked."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class GameWindow(QMainWindow):
@@ -78,7 +91,9 @@ class GameWindow(QMainWindow):
         self.center_status_frame: Optional[QFrame] = None
         self.round_set_label: Optional[QLabel] = None
         self.player_points_value: Optional[QLabel] = None
+        self.player_points_label: Optional[QLabel] = None
         self.ai_points_value: Optional[QLabel] = None
+        self.ai_points_label: Optional[QLabel] = None
         self.player_discards_value: Optional[QLabel] = None
         self.ai_discards_value: Optional[QLabel] = None
 
@@ -89,6 +104,7 @@ class GameWindow(QMainWindow):
 
         # Keep dialog refs so windows remain open.
         self.collection_windows: List[QDialog] = []
+        self.detail_windows: List[QDialog] = []
 
         # AI action timer
         self.ai_timer = QTimer()
@@ -261,10 +277,10 @@ class GameWindow(QMainWindow):
         self.player_points_value.setAlignment(Qt.AlignCenter)
         self.player_points_value.setStyleSheet("color: #64ff96; font-size: 28px; font-weight: bold;")
         player_points_layout.addWidget(self.player_points_value)
-        player_points_label = QLabel("PLAYER")
-        player_points_label.setAlignment(Qt.AlignCenter)
-        player_points_label.setStyleSheet("color: #9dd8b5; font-size: 10px; letter-spacing: 1px;")
-        player_points_layout.addWidget(player_points_label)
+        self.player_points_label = QLabel("PLAYER")
+        self.player_points_label.setAlignment(Qt.AlignCenter)
+        self.player_points_label.setStyleSheet("color: #9dd8b5; font-size: 10px; letter-spacing: 1px;")
+        player_points_layout.addWidget(self.player_points_label)
 
         self.player_discards_value = QLabel("Discards Left: 2")
         self.player_discards_value.setAlignment(Qt.AlignCenter)
@@ -286,10 +302,10 @@ class GameWindow(QMainWindow):
         self.ai_points_value.setAlignment(Qt.AlignCenter)
         self.ai_points_value.setStyleSheet("color: #ff8f8f; font-size: 28px; font-weight: bold;")
         ai_points_layout.addWidget(self.ai_points_value)
-        ai_points_label = QLabel("AI")
-        ai_points_label.setAlignment(Qt.AlignCenter)
-        ai_points_label.setStyleSheet("color: #ffb4b4; font-size: 10px; letter-spacing: 1px;")
-        ai_points_layout.addWidget(ai_points_label)
+        self.ai_points_label = QLabel("AI")
+        self.ai_points_label.setAlignment(Qt.AlignCenter)
+        self.ai_points_label.setStyleSheet("color: #ffb4b4; font-size: 10px; letter-spacing: 1px;")
+        ai_points_layout.addWidget(self.ai_points_label)
 
         self.ai_discards_value = QLabel("Discards Left: 2")
         self.ai_discards_value.setAlignment(Qt.AlignCenter)
@@ -415,7 +431,7 @@ class GameWindow(QMainWindow):
         self.hand_section_label.setStyleSheet("color: #00d4ff; font-weight: bold; margin-top: 10px;")
         layout.addWidget(self.hand_section_label)
 
-        self.hand_preview_label = QLabel("Select cards to preview projected hand value")
+        self.hand_preview_label = ClickableLabel("Select cards to preview projected hand value")
         self.hand_preview_label.setWordWrap(False)
         self.hand_preview_label.setFixedHeight(30)
         self.hand_preview_label.setStyleSheet(
@@ -423,6 +439,9 @@ class GameWindow(QMainWindow):
             "border-radius: 6px; padding: 6px;"
         )
         self.hand_preview_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.hand_preview_label.setCursor(Qt.PointingHandCursor)
+        self.hand_preview_label.setToolTip("Click for a score breakdown")
+        self.hand_preview_label.clicked.connect(self._show_hand_breakdown_dialog)
         layout.addWidget(self.hand_preview_label)
 
         self.hand_scroll = QScrollArea()
@@ -658,6 +677,7 @@ class GameWindow(QMainWindow):
         self._update_display()
         mode_text = "2-Player" if self.game_mode == "two_player" else "Vs AI"
         self.action_log.add_log_entry(f"New game started ({mode_text})! Set 1 of 3")
+        self._handle_set_start_turn_order_event()
 
     def _prompt_game_mode(self) -> bool:
         """Prompt for game mode at startup and when NEW GAME is pressed."""
@@ -836,6 +856,10 @@ class GameWindow(QMainWindow):
         )
         self.player_points_value.setText(f"{self.game_state.player.round_score:,}")
         self.ai_points_value.setText(f"{self.game_state.ai.round_score:,}")
+        if self.player_points_label is not None:
+            self.player_points_label.setText(self._scoreboard_label_text(0))
+        if self.ai_points_label is not None:
+            self.ai_points_label.setText(self._scoreboard_label_text(1))
         self.player_discards_value.setText(
             f"Discards Left: {self.game_state.player.discard_actions_remaining()}"
         )
@@ -1058,10 +1082,25 @@ class GameWindow(QMainWindow):
     def _update_action_buttons(self):
         """Enable or disable play/discard buttons based on active player selection."""
         is_set_play = self.game_state.current_phase == GamePhase.SET_PLAY
+        if self._is_waiting_for_ai_opening_hand():
+            self.play_btn.setEnabled(False)
+            self.discard_btn.setEnabled(False)
+            return
+
         selected = self.selected_cards_by_player[self.active_human_player_index]
         self.play_btn.setEnabled(is_set_play and len(selected) == 5)
         can_discard = self._active_player().can_discard()
         self.discard_btn.setEnabled(is_set_play and can_discard and len(selected) > 0)
+
+    def _is_waiting_for_ai_opening_hand(self) -> bool:
+        """Return whether AI must complete the opening action before human interaction."""
+        return (
+            self.game_mode == "ai"
+            and self.game_state.current_phase == GamePhase.SET_PLAY
+            and self.game_state.set_first_player == 1
+            and self.player_played_cards is None
+            and self.ai_played_cards is None
+        )
 
     def _update_center_header_layout(self):
         """Adjust center header visibility and sizing by phase."""
@@ -1081,6 +1120,143 @@ class GameWindow(QMainWindow):
             self.title_label.setFixedHeight(44)
             self.round_set_label.setStyleSheet("color: #c9a66b; font-size: 18px; font-weight: bold;")
 
+    def _scoreboard_label_text(self, player_index: int) -> str:
+        """Return the label under each score card for the current mode."""
+        if self.game_mode == "two_player":
+            return f"PLAYER {player_index + 1}"
+        return "PLAYER" if player_index == 0 else "AI"
+
+    def _show_hand_breakdown_dialog(self):
+        """Open a detailed breakdown for the currently projected hand."""
+        selected = list(self.selected_cards_by_player[self.active_human_player_index])
+        if not selected:
+            QMessageBox.information(self, "Hand Breakdown", "Select cards to see a score breakdown.")
+            return
+
+        current_idx = self.active_human_player_index
+        opponent_idx = 1 - current_idx
+        player = self.game_state.player if current_idx == 0 else self.game_state.ai
+        opponent = self.game_state.ai if current_idx == 0 else self.game_state.player
+        disabled = self.game_state.round_disabled_jokers[current_idx]
+        opponent_disabled = self.game_state.round_disabled_jokers[opponent_idx]
+
+        try:
+            if len(selected) > 5:
+                projected_hand = PokerHandEvaluator.find_best_hand_with_modifiers(selected, player, disabled)
+            elif len(selected) == 5:
+                projected_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(selected, player, disabled)
+            else:
+                projected_hand = self._evaluate_partial_hand_with_modifiers(selected, player, disabled)
+        except Exception as exc:
+            QMessageBox.warning(self, "Hand Breakdown", f"Could not evaluate the selected cards: {exc}")
+            return
+
+        projected_score = ScoringRules.calculate_score(
+            projected_hand,
+            player,
+            opponent,
+            disabled_jokers=disabled,
+            opponent_disabled_jokers=opponent_disabled,
+        )
+
+        breakdown = projected_score.breakdown or {}
+        hand_name = breakdown.get("hand_name", ScoringRules.get_hand_name(projected_hand.hand_rank))
+        planet_details = breakdown.get("planet_details", [])
+        joker_details = breakdown.get("joker_details", [])
+
+        def format_row(label: str, value: str) -> str:
+            return (
+                "<tr>"
+                f"<td style='padding:4px 10px 4px 0; color:#9fb3d3;'>{escape(label)}</td>"
+                f"<td style='padding:4px 0; color:#eef4ff; text-align:right; white-space:nowrap;'>{escape(value)}</td>"
+                "</tr>"
+            )
+
+        planet_rows = ""
+        if planet_details:
+            for item in planet_details:
+                planet_rows += format_row(
+                    f"{item['planet']} x{item['level']}",
+                    f"+{item['chips']} chips / +{item['mult']} mult",
+                )
+        else:
+            planet_rows = format_row("Planets", "None")
+
+        joker_rows = ""
+        if joker_details:
+            for item in joker_details:
+                note = item.get("note") or "No bonus from this joker"
+                chips = item.get("chips", 0)
+                mult = item.get("mult", 0)
+                x_mult = item.get("x_mult", 1.0)
+                bonus_bits = []
+                if chips:
+                    bonus_bits.append(f"+{chips} chips")
+                if mult:
+                    bonus_bits.append(f"+{mult} mult")
+                if x_mult != 1.0:
+                    bonus_bits.append(f"x{x_mult:.2f}")
+                bonus_text = ", ".join(bonus_bits) if bonus_bits else "No bonus"
+                joker_rows += format_row(f"{item['joker']}", f"{bonus_text} — {note}")
+        else:
+            joker_rows = format_row("Jokers", "None")
+
+        summary_html = (
+            "<html><body style='background-color:#0e1428; color:#d6deeb; font-family:Bahnschrift;'>"
+            f"<h2 style='color:#c9a66b; margin:0 0 8px 0;'>Hand Breakdown - {escape(hand_name)}</h2>"
+            f"<p style='margin:0 0 12px 0; color:#9fb3d3;'>Selected cards: {len(selected)} | Final score: <b>{projected_score.final_score:,}</b></p>"
+            "<table style='width:100%; border-collapse:collapse; margin-bottom:12px;'>"
+            f"{format_row('Base chips', str(projected_score.base_chips))}"
+            f"{format_row('Base mult', str(projected_score.base_mult))}"
+            f"{format_row('Card chips', str(projected_score.card_chips))}"
+            f"{format_row('Planet chips', str(projected_score.planet_chips))}"
+            f"{format_row('Planet mult', str(projected_score.planet_mult))}"
+            f"{format_row('Joker chips', str(projected_score.joker_chip_bonus))}"
+            f"{format_row('Joker mult', str(projected_score.joker_mult_bonus))}"
+            f"{format_row('Joker x mult', f'{projected_score.joker_x_mult:.2f}')}"
+            f"{format_row('Total chips', str(breakdown.get('total_chips', 0)))}"
+            f"{format_row('Total mult', str(breakdown.get('total_mult', 0)))}"
+            f"{format_row('Final score', str(projected_score.final_score))}"
+            "</table>"
+            "<h3 style='color:#7ec7ff; margin:0 0 6px 0;'>Planet Bonuses</h3>"
+            "<table style='width:100%; border-collapse:collapse; margin-bottom:12px;'>"
+            f"{planet_rows}"
+            "</table>"
+            "<h3 style='color:#ff9fb0; margin:0 0 6px 0;'>Joker Bonuses</h3>"
+            "<table style='width:100%; border-collapse:collapse;'>"
+            f"{joker_rows}"
+            "</table>"
+            "</body></html>"
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Hand Breakdown")
+        dialog.resize(760, 620)
+        dialog.setStyleSheet("background-color: #0e1428; color: #d6deeb;")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        browser = QTextBrowser()
+        browser.setHtml(summary_html)
+        browser.setStyleSheet(
+            "QTextBrowser { background-color: #0f1419; border: 1px solid #2f3c7e; border-radius: 8px; padding: 10px; }"
+        )
+        layout.addWidget(browser)
+
+        close_btn = QPushButton("CLOSE")
+        close_btn.setStyleSheet(
+            "QPushButton { background-color: #2d6a4f; color: #e9f5ee; font-weight: bold; padding: 8px 14px; }"
+            "QPushButton:hover { background-color: #3a8a67; }"
+        )
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+
+        self.detail_windows.append(dialog)
+        dialog.finished.connect(lambda _: self.detail_windows.remove(dialog) if dialog in self.detail_windows else None)
+        dialog.show()
+
     def _update_selected_hand_preview(self):
         """Show projected hand type/chips/mult/score for current card selections."""
         if self.hand_preview_label is None:
@@ -1089,6 +1265,7 @@ class GameWindow(QMainWindow):
         selected = list(self.selected_cards_by_player[self.active_human_player_index])
         if not selected:
             self.hand_preview_label.setText("Select cards to preview projected hand value")
+            self.hand_preview_label.setToolTip("Select cards to preview projected hand value")
             return
 
         current_idx = self.active_human_player_index
@@ -1141,7 +1318,7 @@ class GameWindow(QMainWindow):
             f"Score {projected_score.final_score}"
         )
         self.hand_preview_label.setText(compact_text)
-        self.hand_preview_label.setToolTip(compact_text)
+        self.hand_preview_label.setToolTip(compact_text + "\nClick for a full breakdown.")
 
     def _evaluate_partial_hand_with_modifiers(
         self,
@@ -1328,7 +1505,11 @@ class GameWindow(QMainWindow):
             button_row.addWidget(bid_btn)
 
             reduce_btn = QPushButton("Bid -Min")
-            reduce_btn.setEnabled(next_bidder in ([0, 1] if self.game_mode == "two_player" else [0]))
+            if self.game_mode == "two_player":
+                can_reduce = next_bidder in (0, 1) and self.game_state.can_reduce_auction_bid_for_card(next_bidder, idx)
+            else:
+                can_reduce = next_bidder == 0 and self.game_state.can_reduce_auction_bid_for_card(0, idx)
+            reduce_btn.setEnabled(can_reduce)
             reduce_btn.clicked.connect(lambda _, card_idx=idx: self._handle_auction_card_reduce(card_idx))
             reduce_btn.setStyleSheet(
                 "padding: 6px; font-size: 11px; background-color: #40312a; border: 1px solid #6f5346;"
@@ -1745,6 +1926,9 @@ class GameWindow(QMainWindow):
         if self.game_state.current_phase != GamePhase.SET_PLAY:
             return
 
+        if self._is_waiting_for_ai_opening_hand():
+            return
+
         if self.game_mode == "ai" and player_index != 0:
             return
         if self.game_mode == "two_player" and player_index != self.active_human_player_index:
@@ -1774,6 +1958,15 @@ class GameWindow(QMainWindow):
     def _handle_play_hand(self):
         """Handle play hand button click."""
         if self.game_state.current_phase != GamePhase.SET_PLAY:
+            return
+
+        if (
+            self.game_mode == "ai"
+            and self.game_state.set_first_player == 1
+            and self.player_played_cards is None
+            and self.ai_played_cards is None
+        ):
+            self.action_log.add_log_entry("AI goes first this set.")
             return
 
         active_idx = self.active_human_player_index if self.game_mode == "two_player" else 0
@@ -1846,7 +2039,6 @@ class GameWindow(QMainWindow):
                     ai_copyright_target=ai_target,
                 )
                 self.game_state.end_set()
-                self.active_human_player_index = 0
                 self._update_display()
 
                 if self.game_state.current_phase == GamePhase.GAME_OVER:
@@ -1859,7 +2051,7 @@ class GameWindow(QMainWindow):
 
                 self.player_played_cards = None
                 self.ai_played_cards = None
-                self.action_log.add_log_entry(f"Set {self.game_state.current_set} started")
+                self._handle_set_start_turn_order_event()
                 return
         else:
             # Disable buttons temporarily
@@ -1871,6 +2063,15 @@ class GameWindow(QMainWindow):
     def _handle_discard(self):
         """Handle discard button click."""
         if self.game_state.current_phase != GamePhase.SET_PLAY:
+            return
+
+        if (
+            self.game_mode == "ai"
+            and self.game_state.set_first_player == 1
+            and self.player_played_cards is None
+            and self.ai_played_cards is None
+        ):
+            self.action_log.add_log_entry("AI goes first this set.")
             return
 
         active_idx = self.active_human_player_index if self.game_mode == "two_player" else 0
@@ -1901,7 +2102,7 @@ class GameWindow(QMainWindow):
         self.selected_cards_by_player[active_idx] = []
         self.selected_widgets_by_player[active_idx] = []
         self._sync_legacy_selection_aliases()
-        self._update_hand_display()
+        self._update_display()
 
     def _handle_auction_min_raise(self):
         """Place the minimum legal raise for the human bidder."""
@@ -2006,8 +2207,7 @@ class GameWindow(QMainWindow):
         else:
             self.player_played_cards = None
             self.ai_played_cards = None
-            self.active_human_player_index = 0
-            self.action_log.add_log_entry(f"Set {self.game_state.current_set} started")
+            self._handle_set_start_turn_order_event()
 
     def _perform_ai_action(self):
         """Perform the AI's action."""
@@ -2018,6 +2218,42 @@ class GameWindow(QMainWindow):
 
         if self.game_state.current_phase == GamePhase.AUCTION:
             self._perform_ai_auction_action()
+            return
+
+        # AI-first opening turn for this set.
+        if not self.player_played_cards and not self.ai_played_cards and self.game_state.set_first_player == 1:
+            should_play, cards_to_discard = self.ai.decide_play_or_discard(self.game_state.player)
+
+            if should_play:
+                ai_hand_cards = self.ai.select_playing_hand()
+                self.ai_played_cards = ai_hand_cards.copy()
+
+                for card in ai_hand_cards:
+                    self.game_state.ai.hand.remove(card)
+
+                ai_hand = PokerHandEvaluator.evaluate_hand_with_modifiers(
+                    ai_hand_cards,
+                    self.game_state.ai,
+                    self.game_state.round_disabled_jokers[1],
+                )
+                ai_score = ScoringRules.calculate_score(
+                    ai_hand,
+                    self.game_state.ai,
+                    self.game_state.player,
+                    disabled_jokers=self.game_state.round_disabled_jokers[1],
+                    opponent_disabled_jokers=self.game_state.round_disabled_jokers[0],
+                )
+                self.action_log.add_log_entry(f"AI played {ai_hand.hand_rank.name}: {ai_score.final_score} pts")
+                self._update_display()
+                return
+
+            for card in cards_to_discard:
+                self.game_state.ai.hand.remove(card)
+            self.game_state.ai.discard_actions_used += 1
+            self.game_state.draw_cards(self.game_state.ai, len(cards_to_discard))
+            self.action_log.add_log_entry(f"AI discarded {len(cards_to_discard)} cards")
+            self._update_display()
+            self.ai_timer.start(1000)
             return
 
         # If both players have played, score the set
@@ -2047,7 +2283,7 @@ class GameWindow(QMainWindow):
 
             self.player_played_cards = None
             self.ai_played_cards = None
-            self.action_log.add_log_entry(f"Set {self.game_state.current_set} started")
+            self._handle_set_start_turn_order_event()
             return
 
         # If only player has played, AI plays
@@ -2173,3 +2409,29 @@ class GameWindow(QMainWindow):
         momentum_final = abs(self.game_state.player.momentum)
         msg = f"GAME OVER!\n\n{winner} Wins!\n\nFinal Momentum: {momentum_final}"
         QMessageBox.information(self, "Game Over", msg)
+
+    def _handle_set_start_turn_order_event(self):
+        """Log who starts the set and trigger AI opening action when needed."""
+        event_text = self.game_state.last_set_start_event
+        if event_text:
+            self.action_log.add_log_entry(event_text)
+
+        starter_name = self.game_state.player.name if self.game_state.set_first_player == 0 else self.game_state.ai.name
+        self.action_log.add_log_entry(f"Set {self.game_state.current_set} started. {starter_name} acts first.")
+
+        if self.game_mode == "two_player":
+            self.active_human_player_index = self.game_state.set_first_player
+            self._sync_legacy_selection_aliases()
+            self._update_display()
+            return
+
+        # In AI mode, let AI take its opening turn immediately when it starts the set.
+        if (
+            self.game_state.set_first_player == 1
+            and self.game_state.current_phase == GamePhase.SET_PLAY
+            and self.player_played_cards is None
+            and self.ai_played_cards is None
+        ):
+            self.play_btn.setEnabled(False)
+            self.discard_btn.setEnabled(False)
+            self.ai_timer.start(700)

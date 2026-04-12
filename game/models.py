@@ -285,6 +285,8 @@ class AuctionState:
     card_leaders: List[int] = field(default_factory=list)
     card_player_bids: List[int] = field(default_factory=list)
     card_ai_bids: List[int] = field(default_factory=list)
+    card_player_last_raise_turn: List[int] = field(default_factory=list)
+    card_ai_last_raise_turn: List[int] = field(default_factory=list)
     current_card_index: int = 0
     first_bidder: int = 0  # 0 for player, 1 for AI
     turn_index: int = 0  # 0..3 for winner/loser/winner/loser

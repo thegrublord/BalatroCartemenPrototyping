@@ -38,6 +38,9 @@ class GameState:
 
         # Round tracking
         self.round_winner = None  # 0 for player, 1 for AI
+        self.set_first_player = 0  # 0 for player, 1 for AI
+        self.previous_set_winner: Optional[int] = None
+        self.last_set_start_event: str = ""
         self.last_auction_first_bidder = 0
         self.round_disabled_jokers = {
             0: [],  # Human jokers disabled for current round
@@ -77,6 +80,9 @@ class GameState:
 
         self.auction_state = AuctionState()
         self.round_winner = None
+        self.set_first_player = 0
+        self.previous_set_winner = None
+        self.last_set_start_event = ""
         self.last_auction_first_bidder = 0
         self.round_disabled_jokers = {0: [], 1: []}
 
@@ -193,6 +199,8 @@ class GameState:
             self.player.hand = []
             self.ai.hand = []
 
+        self._resolve_set_first_player()
+
         # Between sets in the same round, keep remaining cards and refill to 8.
 
         while len(self.player.hand) < 8:
@@ -202,6 +210,60 @@ class GameState:
 
         self.current_phase = GamePhase.SET_PLAY
         self.add_action(f"Round {self.current_round}, Set {self.current_set} started")
+
+    def _resolve_set_first_player(self):
+        """Determine who acts first for this set."""
+        if self.current_round == 1 and self.current_set == 1 and self.previous_set_winner is None:
+            player_draw = self._draw_and_shuffle_back(self.player)
+            ai_draw = self._draw_and_shuffle_back(self.ai)
+
+            player_strength = self._initiative_card_strength(player_draw)
+            ai_strength = self._initiative_card_strength(ai_draw)
+
+            tie_break_note = ""
+            if player_strength > ai_strength:
+                self.set_first_player = 0
+            elif ai_strength > player_strength:
+                self.set_first_player = 1
+            else:
+                self.set_first_player = random.choice([0, 1])
+                tie_break_note = " (exact tie, random tiebreak)"
+
+            first_name = self.player.name if self.set_first_player == 0 else self.ai.name
+            self.last_set_start_event = (
+                f"Opening draw for first set: {self.player.name} drew {player_draw}, "
+                f"{self.ai.name} drew {ai_draw}. {first_name} goes first{tie_break_note}."
+            )
+            self.add_action(self.last_set_start_event)
+            return
+
+        if self.previous_set_winner in (0, 1):
+            self.set_first_player = self.previous_set_winner
+
+        first_name = self.player.name if self.set_first_player == 0 else self.ai.name
+        self.last_set_start_event = f"{first_name} goes first this set (won previous set)."
+        self.add_action(self.last_set_start_event)
+
+    @staticmethod
+    def _initiative_card_strength(card: Card) -> Tuple[int, int]:
+        """Return comparable strength tuple for initiative draw cards."""
+        suit_strength = {
+            Suit.CLUBS: 1,
+            Suit.DIAMONDS: 2,
+            Suit.HEARTS: 3,
+            Suit.SPADES: 4,
+        }
+        return (card.rank.rank_order(), suit_strength[card.suit])
+
+    def _draw_and_shuffle_back(self, player: Player) -> Card:
+        """Draw one card for initiative and shuffle it back into deck."""
+        if not player.deck:
+            player.deck = self._create_deck()
+
+        card = player.deck.pop(0)
+        player.deck.append(card)
+        random.shuffle(player.deck)
+        return card
 
     def score_set(
         self,
@@ -245,11 +307,29 @@ class GameState:
         self.player.round_score += player_score.final_score
         self.ai.round_score += ai_score.final_score
 
-        set_winner = "Player" if player_score.final_score > ai_score.final_score else "AI"
-        self.add_action(
-            f"{set_winner} wins set {self.current_set}: "
-            f"Player {player_score.final_score} vs AI {ai_score.final_score}"
-        )
+        if player_score.final_score > ai_score.final_score:
+            self.previous_set_winner = 0
+            set_winner = self.player.name
+            self.add_action(
+                f"{set_winner} wins set {self.current_set}: "
+                f"{self.player.name} {player_score.final_score} vs {self.ai.name} {ai_score.final_score}"
+            )
+        elif ai_score.final_score > player_score.final_score:
+            self.previous_set_winner = 1
+            set_winner = self.ai.name
+            self.add_action(
+                f"{set_winner} wins set {self.current_set}: "
+                f"{self.player.name} {player_score.final_score} vs {self.ai.name} {ai_score.final_score}"
+            )
+        else:
+            # No winner on tied sets; keep existing first-player side for the next set.
+            self.previous_set_winner = self.set_first_player
+            retained = self.player.name if self.set_first_player == 0 else self.ai.name
+            self.add_action(
+                f"Set {self.current_set} tied: "
+                f"{self.player.name} {player_score.final_score} vs {self.ai.name} {ai_score.final_score}. "
+                f"{retained} keeps first move next set."
+            )
 
         return player_score, ai_score
 
@@ -372,6 +452,8 @@ class GameState:
         self.auction_state.card_leaders = [-1 for _ in self.auction_state.revealed_cards]
         self.auction_state.card_player_bids = [0 for _ in self.auction_state.revealed_cards]
         self.auction_state.card_ai_bids = [0 for _ in self.auction_state.revealed_cards]
+        self.auction_state.card_player_last_raise_turn = [-1 for _ in self.auction_state.revealed_cards]
+        self.auction_state.card_ai_last_raise_turn = [-1 for _ in self.auction_state.revealed_cards]
         self.auction_state.first_bidder = self.round_winner if self.round_winner is not None else 0
         self.last_auction_first_bidder = self.auction_state.first_bidder
         self.auction_state.turn_index = 0
@@ -486,9 +568,15 @@ class GameState:
 
         # Place the bid
         if player_index == 0:
+            previous_bid = self.auction_state.card_player_bids[card_index]
             self.auction_state.card_player_bids[card_index] = bid_amount
+            if bid_amount > previous_bid:
+                self.auction_state.card_player_last_raise_turn[card_index] = self.auction_state.turn_index
         else:
+            previous_bid = self.auction_state.card_ai_bids[card_index]
             self.auction_state.card_ai_bids[card_index] = bid_amount
+            if bid_amount > previous_bid:
+                self.auction_state.card_ai_last_raise_turn[card_index] = self.auction_state.turn_index
 
         self._sync_card_leader_and_bid(card_index)
         # Legacy fields kept synced for any preview logic.
@@ -510,6 +598,9 @@ class GameState:
             return False
 
         if card_index < 0 or card_index >= len(self.auction_state.revealed_cards):
+            return False
+
+        if not self.can_reduce_auction_bid_for_card(player_index, card_index):
             return False
 
         minimum_step = self.auction_state.revealed_cards[card_index].minimum_bid
@@ -534,6 +625,19 @@ class GameState:
         reduced_to = self.auction_state.card_player_bids[card_index] if player_index == 0 else self.auction_state.card_ai_bids[card_index]
         self.add_action(f"{bidder_name} reduces bid to {reduced_to} on {card}")
         return True
+
+    def can_reduce_auction_bid_for_card(self, player_index: int, card_index: int) -> bool:
+        """Return whether a bidder can reduce a card bid this turn."""
+        if not self.auction_state.is_active:
+            return False
+        if player_index != self.get_next_auction_bidder():
+            return False
+        if card_index < 0 or card_index >= len(self.auction_state.revealed_cards):
+            return False
+
+        if player_index == 0:
+            return self.auction_state.card_player_last_raise_turn[card_index] == self.auction_state.turn_index
+        return self.auction_state.card_ai_last_raise_turn[card_index] == self.auction_state.turn_index
 
     def _sync_card_leader_and_bid(self, card_index: int):
         """Sync aggregate bid/leader from per-player card bids."""

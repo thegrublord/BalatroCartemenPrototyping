@@ -221,6 +221,13 @@ class ScoreCalculator:
     """Implement the game scoring formula and joker attribution."""
 
     @staticmethod
+    def _planet_applies_to_hand(planet: Planet, hand_rank: HandRank) -> bool:
+        planet_name = planet.hand_type
+        if hand_rank == HandRank.STRAIGHT_FLUSH:
+            return planet_name in {"Straight Flush", "Straight", "Flush"}
+        return planet_name == ScoreCalculator._hand_label(hand_rank)
+
+    @staticmethod
     def calculate_score(
         hand_cards: Sequence[Card],
         hand_rank: HandRank,
@@ -249,7 +256,7 @@ class ScoreCalculator:
         planet_mult = 0
         hand_label = ScoreCalculator._hand_label(hand_rank)
         for planet, level in player.planets.items():
-            if planet.hand_type == hand_label:
+            if ScoreCalculator._planet_applies_to_hand(planet, hand_rank):
                 planet_chips += level * planet.chip_bonus
                 planet_mult += level * planet.mult_bonus
 
@@ -403,7 +410,7 @@ class ScoreCalculator:
             return JokerEffect(x_mult=4.0)
         if joker_type == JokerType.RAINBOW:
             if len({card.suit for card in hand_cards}) == 4:
-                return JokerEffect(x_mult=3.0)
+                return JokerEffect(x_mult=2.0)
             return JokerEffect()
         return JokerEffect()
 

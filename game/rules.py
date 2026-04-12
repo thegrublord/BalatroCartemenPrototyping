@@ -286,6 +286,14 @@ class ScoringRules:
     """Implements game scoring with jokers and planets."""
 
     @staticmethod
+    def _planet_applies_to_hand(planet: Planet, hand_rank: HandRank) -> bool:
+        """Return whether a planet bonus should apply to the given hand."""
+        planet_name = planet.hand_type().lower()
+        if hand_rank == HandRank.STRAIGHT_FLUSH:
+            return planet_name in {"straight flush", "straight", "flush"}
+        return planet_name == hand_rank.name.replace("_", " ").lower()
+
+    @staticmethod
     def calculate_score(
         hand: PokerHand,
         player: Player,
@@ -320,60 +328,101 @@ class ScoringRules:
         planet_chips = 0
         planet_mult = 0
         hand_type_name = hand.hand_rank.name.replace("_", " ").lower()
+        planet_details = []
         for planet_enum in Planet:
-            if planet_enum.hand_type().lower() == hand_type_name:
+            if ScoringRules._planet_applies_to_hand(planet_enum, hand.hand_rank):
                 level = player.planet_level(planet_enum)
-                planet_chips += level * planet_enum.chip_bonus()
-                planet_mult += level * planet_enum.mult_bonus()
+                if level > 0:
+                    chips_bonus = level * planet_enum.chip_bonus()
+                    mult_bonus = level * planet_enum.mult_bonus()
+                    planet_chips += chips_bonus
+                    planet_mult += mult_bonus
+                    planet_details.append(
+                        {
+                            "planet": planet_enum.name,
+                            "hand_type": planet_enum.hand_type(),
+                            "level": level,
+                            "chips": chips_bonus,
+                            "mult": mult_bonus,
+                        }
+                    )
 
         # Calculate joker bonuses
         joker_chip_bonus = 0
         joker_mult_bonus = 0
         joker_x_mult = 1.0
+        joker_details = []
 
         available_joker_types = PokerHandEvaluator._resolve_effective_joker_types(player, disabled_jokers)
         has_uniform = JokerType.UNIFORM in available_joker_types
         has_smear = JokerType.SMEAR in available_joker_types
+        active_jokers = [j for j in player.jokers if j not in disabled_jokers]
 
         def normalize_suit_for_player(suit: Suit) -> Suit:
             return PokerHandEvaluator._normalize_suit_with_effects(suit, has_uniform, has_smear)
 
-        for jtype in available_joker_types:
+        for joker, jtype in zip(active_jokers, available_joker_types):
+            detail = {
+                "joker": str(joker),
+                "joker_type": jtype.name,
+                "chips": 0,
+                "mult": 0,
+                "x_mult": 1.0,
+                "active": False,
+                "note": "",
+            }
 
             # Common jokers
             if jtype == JokerType.BANNER:
-                joker_chip_bonus += 20 * player.discard_actions_remaining()
+                chips = 20 * player.discard_actions_remaining()
+                joker_chip_bonus += chips
+                detail.update(active=chips > 0, chips=chips, note="20 chips per remaining discard")
 
             elif jtype == JokerType.ABSTRACT:
-                joker_mult_bonus += 2 * len(player.jokers)
+                mult = 1 * len(player.jokers)
+                joker_mult_bonus += mult
+                detail.update(active=mult > 0, mult=mult, note="1 mult per joker owned")
 
             elif jtype == JokerType.EVEN_STEVEN:
                 even_cards = sum(1 for c in hand.cards if c.rank.rank_order() % 2 == 0)
-                joker_mult_bonus += 2 * even_cards
+                mult = 2 * even_cards
+                joker_mult_bonus += mult
+                detail.update(active=mult > 0, mult=mult, note=f"2 mult per even card ({even_cards})")
 
             elif jtype == JokerType.ODD_TODD:
                 odd_cards = sum(1 for c in hand.cards if c.rank.rank_order() % 2 == 1)
-                joker_mult_bonus += 2 * odd_cards
+                mult = 2 * odd_cards
+                joker_mult_bonus += mult
+                detail.update(active=mult > 0, mult=mult, note=f"2 mult per odd card ({odd_cards})")
 
             elif jtype == JokerType.THE_DUO:
                 if hand.hand_rank == HandRank.PAIR or hand.hand_rank == HandRank.TWO_PAIR:
                     joker_chip_bonus += 20
+                    detail.update(active=True, chips=20, note="20 chips for Pair or Two Pair")
 
             elif jtype == JokerType.THE_GREEDY:
                 diamonds = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.DIAMONDS)
-                joker_chip_bonus += 10 * diamonds
+                chips = 10 * diamonds
+                joker_chip_bonus += chips
+                detail.update(active=chips > 0, chips=chips, note=f"10 chips per diamond ({diamonds})")
 
             elif jtype == JokerType.THE_LOVER:
                 hearts = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.HEARTS)
-                joker_chip_bonus += 10 * hearts
+                chips = 10 * hearts
+                joker_chip_bonus += chips
+                detail.update(active=chips > 0, chips=chips, note=f"10 chips per heart ({hearts})")
 
             elif jtype == JokerType.THE_PROTECTOR:
                 spades = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.SPADES)
-                joker_chip_bonus += 10 * spades
+                chips = 10 * spades
+                joker_chip_bonus += chips
+                detail.update(active=chips > 0, chips=chips, note=f"10 chips per spade ({spades})")
 
             elif jtype == JokerType.THE_CHAIRMAN:
                 clubs = sum(1 for c in hand.cards if normalize_suit_for_player(c.suit) == Suit.CLUBS)
-                joker_chip_bonus += 10 * clubs
+                chips = 10 * clubs
+                joker_chip_bonus += chips
+                detail.update(active=chips > 0, chips=chips, note=f"10 chips per club ({clubs})")
 
             # Rare jokers
             elif jtype == JokerType.TAX_MAN and opponent:
@@ -381,25 +430,33 @@ class ScoringRules:
                     opponent_face_cards = sum(
                         1 for c in opponent_hand_cards if c.rank in (Rank.JACK, Rank.QUEEN, Rank.KING)
                     )
-                    joker_chip_bonus += 10 * opponent_face_cards
+                    chips = 10 * opponent_face_cards
+                    joker_chip_bonus += chips
+                    detail.update(active=chips > 0, chips=chips, note=f"10 chips per opposing face card ({opponent_face_cards})")
 
             elif jtype == JokerType.THE_TRIBE:
                 if hand.hand_rank == HandRank.FLUSH:
                     joker_x_mult *= 2
+                    detail.update(active=True, x_mult=2.0, note="x2 mult for Flush")
 
             elif jtype == JokerType.THE_ORDER:
                 if hand.hand_rank == HandRank.STRAIGHT:
                     joker_x_mult *= 2
+                    detail.update(active=True, x_mult=2.0, note="x2 mult for Straight")
 
             # Legendary jokers
             elif jtype == JokerType.FAMILY:
                 if hand.hand_rank == HandRank.FOUR_OF_A_KIND:
                     joker_x_mult *= 4
+                    detail.update(active=True, x_mult=4.0, note="x4 mult for Four of a Kind")
 
             elif jtype == JokerType.RAINBOW:
                 suits = set(c.suit for c in hand.cards)
                 if len(suits) == 4:
-                    joker_x_mult *= 4
+                    joker_x_mult *= 2
+                    detail.update(active=True, x_mult=2.0, note="x2 mult for all 4 suits")
+
+            joker_details.append(detail)
 
         # Final calculation
         total_chips = base_chips + planet_chips + card_chips + joker_chip_bonus
@@ -419,10 +476,20 @@ class ScoringRules:
             hand_rank=hand.hand_rank,
             breakdown={
                 "base": base_chips,
+                "base_mult": base_mult,
                 "planets": planet_chips,
+                "planet_mult": planet_mult,
                 "cards": card_chips,
-                "joker_chips": joker_chip_bonus
-            }
+                "joker_chips": joker_chip_bonus,
+                "joker_mult": joker_mult_bonus,
+                "joker_x_mult": joker_x_mult,
+                "total_chips": total_chips,
+                "total_mult": total_mult,
+                "final_score": final_score,
+                "hand_name": ScoringRules.get_hand_name(hand.hand_rank),
+                "planet_details": planet_details,
+                "joker_details": joker_details,
+            },
         )
 
     @staticmethod
