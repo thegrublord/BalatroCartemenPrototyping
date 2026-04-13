@@ -1071,6 +1071,14 @@ class GameWindow(QMainWindow):
     def _inactive_player(self):
         return self.game_state.ai if self.active_human_player_index == 0 else self.game_state.player
 
+    def _auction_side_name(self, side_index: int) -> str:
+        """Return display name for auction side index in current mode."""
+        if side_index == 0:
+            return "Player 1" if self.game_mode == "two_player" else "Player"
+        if side_index == 1:
+            return "Player 2" if self.game_mode == "two_player" else "AI"
+        return "None"
+
     def _update_turn_banner(self):
         """Update two-player turn indicator and card highlights."""
         if self.game_mode != "two_player" or self.hand_turn_label is None:
@@ -1419,12 +1427,13 @@ class GameWindow(QMainWindow):
             return
 
         next_bidder = self.game_state.get_next_auction_bidder()
-        next_text = "Player" if next_bidder == 0 else ("AI" if next_bidder == 1 else "Resolving")
-        if self.game_mode == "two_player":
-            next_text = "Player 1" if next_bidder == 0 else ("Player 2" if next_bidder == 1 else "Resolving")
+        next_text = self._auction_side_name(next_bidder) if next_bidder in (0, 1) else "Resolving"
+        spent_left = "P1" if self.game_mode == "two_player" else "P"
+        spent_right = "P2" if self.game_mode == "two_player" else "AI"
         self.auction_turn_info_label.setText(
             f"Turn {self.game_state.auction_state.turn_index + 1}/4 | Next: {next_text} | "
-            f"Spent P:{self.game_state.auction_state.player_spent} AI:{self.game_state.auction_state.ai_spent}"
+            f"Spent {spent_left}:{self.game_state.auction_state.player_spent} "
+            f"{spent_right}:{self.game_state.auction_state.ai_spent}"
         )
         self.auction_end_turn_btn.setEnabled(next_bidder in ([0, 1] if self.game_mode == "two_player" else [0]))
 
@@ -1479,7 +1488,7 @@ class GameWindow(QMainWindow):
 
             current_bid = self.game_state.auction_state.card_bids[idx]
             leader = self.game_state.auction_state.card_leaders[idx]
-            leader_text = "None" if leader == -1 else ("Player" if leader == 0 else "AI")
+            leader_text = self._auction_side_name(leader)
             min_next = self.game_state.get_card_min_next_bid(idx)
             info = QLabel(
                 f"Min: {card.minimum_bid} | Bid: {current_bid}\nLeader: {leader_text} | Next: {min_next}"
@@ -2020,11 +2029,12 @@ class GameWindow(QMainWindow):
         self._update_played_hands_display()
 
         if self.game_mode == "two_player":
-            if active_idx == 0 and self.ai_played_cards is None:
-                self.active_human_player_index = 1
+            if self.player_played_cards is None or self.ai_played_cards is None:
+                self.active_human_player_index = 1 - active_idx
                 self._sync_legacy_selection_aliases()
                 self._update_hand_display()
-                self.action_log.add_log_entry("Player 2 turn")
+                next_player = "Player 1" if self.active_human_player_index == 0 else "Player 2"
+                self.action_log.add_log_entry(f"{next_player} turn")
                 return
 
             if self.player_played_cards and self.ai_played_cards:
